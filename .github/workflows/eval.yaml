@@ -1,0 +1,81 @@
+name: agent-eval
+
+# The senior signal: every PR that touches agents or evals must pass the eval suite.
+# A PR that drops eval pass rate is blocked at merge.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'agents/**'
+      - 'evals/**'
+      - 'services/**'
+      - '.github/workflows/eval.yaml'
+
+  # Also run nightly to detect drift from upstream model changes
+  schedule:
+    - cron: '0 7 * * *'
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Use a CI-only API key with a $5 monthly cap (avoid wallet drain)
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_CI }}
+      LANGCHAIN_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      LANGCHAIN_TRACING_V2: true
+      LANGCHAIN_PROJECT: aiops-platform-ci
+      AGENT_BUDGET_USD: '0.50'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          source .venv/bin/activate
+          uv pip install -r requirements.txt
+
+      - name: Run agent eval suite
+        id: eval
+        run: |
+          source .venv/bin/activate
+          # The eval target writes JSON results to evals/results/latest.json
+          # and exits non-zero if pass rate drops below threshold.
+          make eval THRESHOLD=0.80
+
+      - name: Post eval summary to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const results = JSON.parse(fs.readFileSync('evals/results/latest.json', 'utf8'));
+            const body = `## Eval results\n\n` +
+              `- Pass rate: **${(results.pass_rate * 100).toFixed(1)}%** (${results.passed}/${results.total})\n` +
+              `- $ per run (avg): $${results.avg_cost_usd.toFixed(4)}\n` +
+              `- p95 latency: ${results.p95_latency_ms}ms\n\n` +
+              `Failed cases: ${results.failed.map(f => '`' + f + '`').join(', ') || '_none_'}`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+      - name: Upload eval artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: evals/results/

@@ -1,0 +1,108 @@
+# --- Secrets and local config ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+.secrets/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.venv-*/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# --- uv ---
+.uv-cache/
+
+# --- Node / Next.js ---
+node_modules/
+.next/
+out/
+.turbo/
+.npm/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp
+.pnp.js
+
+# --- IDEs and editors ---
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
+
+# --- macOS / Linux / Windows ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# --- Agent / LLM artifacts ---
+costs.txt
+.langsmith/
+traces/
+*.trace
+checkpoints/
+.checkpointer/
+
+# --- Vector stores (large; regenerate from sources) ---
+chroma_data/
+.chroma/
+pgdata/
+
+# --- Logs and runtime data ---
+logs/
+*.log
+*.pid
+runtime/
+tmp/
+
+# --- Docker ---
+.docker/
+
+# --- Terraform ---
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# --- Kubernetes ---
+kubeconfig
+.kube/
+
+# --- Demo recordings (large binaries; consider git-lfs) ---
+docs/*.mov
+docs/*.mp4
+*.cast
+
+# --- Local-only data ---
+samples/
+fixtures/local/
