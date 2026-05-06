@@ -1,0 +1,4 @@
+# Anthropic SDK backend — used by planner_anthropic.py + tools_anthropic.py + memory_anthropic.py
+# Install with: uv pip install -r requirements_anthropic.txt
+anthropic>=0.40.0
+pydantic>=2.0.0

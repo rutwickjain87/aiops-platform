@@ -1,0 +1,15 @@
+# LangChain backend — used by planner_langchain.py
+# Install with: uv pip install -r requirements_langchain.txt
+# Note: also installs anthropic + pydantic, so you don't need requirements_anthropic.txt separately.
+#
+# Optional — LangSmith tracing (free tier available at smith.langchain.com):
+#   export LANGCHAIN_TRACING_V2=true
+#   export LANGCHAIN_API_KEY="ls__..."
+#   export LANGCHAIN_PROJECT="aiops-platform"
+# langsmith>=0.1.0
+
+anthropic>=0.40.0
+langchain>=0.3.0
+langchain-anthropic>=0.3.0
+langchain-core>=0.3.0
+pydantic>=2.0.0
