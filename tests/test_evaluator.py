@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "agents" / "log-intelligence"))
 
-from evaluator import CaseResult, Evaluator  # noqa: E402
+from evaluator import CaseResult, Evaluator  # noqa: E402, I001
 
 
 # ── CaseResult ─────────────────────────────────────────────────────────────────
