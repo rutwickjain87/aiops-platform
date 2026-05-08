@@ -24,6 +24,7 @@ MODELS TO COMPARE:
 
 Pricing source: https://openrouter.ai/models (verify before publishing results)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -41,53 +42,58 @@ from pathlib import Path
 # Verify current prices at https://openrouter.ai/models before publishing results.
 MODELS = [
     {
-        "id":         "anthropic/claude-sonnet-4-6",
-        "label":      "Claude Sonnet 4.6",
-        "in_usd_1m":  3.00,
+        "id": "anthropic/claude-sonnet-4-6",
+        "label": "Claude Sonnet 4.6",
+        "in_usd_1m": 3.00,
         "out_usd_1m": 15.00,
     },
     {
-        "id":         "anthropic/claude-haiku-4-5",
-        "label":      "Claude Haiku 4.5",
-        "in_usd_1m":  0.25,
+        "id": "anthropic/claude-haiku-4-5",
+        "label": "Claude Haiku 4.5",
+        "in_usd_1m": 0.25,
         "out_usd_1m": 1.25,
     },
     {
-        "id":         "openai/gpt-4o-mini",
-        "label":      "GPT-4o Mini",
-        "in_usd_1m":  0.15,
+        "id": "openai/gpt-4o-mini",
+        "label": "GPT-4o Mini",
+        "in_usd_1m": 0.15,
         "out_usd_1m": 0.60,
     },
 ]
 
-CASES_PATH   = Path("evals/cases.jsonl")
-OUTPUT_PATH  = (Path(__file__).resolve().parent / "../../experiments/log-triage-model-routing.md").resolve()
-OUTPUTS_DIR  = (Path(__file__).resolve().parent / "../../experiments/outputs").resolve()
-DEFAULT_SLEEP = 3   # seconds between cases — avoids OpenRouter rate limits
+CASES_PATH = Path("evals/cases.jsonl")
+OUTPUT_PATH = (
+    Path(__file__).resolve().parent / "../../experiments/log-triage-model-routing.md"
+).resolve()
+OUTPUTS_DIR = (Path(__file__).resolve().parent / "../../experiments/outputs").resolve()
+DEFAULT_SLEEP = 3  # seconds between cases — avoids OpenRouter rate limits
 
 
 # ── Data types ────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class CaseResult:
-    case_id:       str
-    passed:        bool
-    notes:         str
-    latency_ms:    float
-    input_tokens:  int
+    case_id: str
+    passed: bool
+    notes: str
+    latency_ms: float
+    input_tokens: int
     output_tokens: int
 
     def cost_usd(self, in_usd_1m: float, out_usd_1m: float) -> float:
-        return (self.input_tokens  / 1_000_000 * in_usd_1m +
-                self.output_tokens / 1_000_000 * out_usd_1m)
+        return (
+            self.input_tokens / 1_000_000 * in_usd_1m
+            + self.output_tokens / 1_000_000 * out_usd_1m
+        )
 
 
 @dataclass
 class ModelRow:
-    model_id:   str
-    label:      str
-    results:    list[CaseResult] = field(default_factory=list)
-    in_usd_1m:  float = 0.0
+    model_id: str
+    label: str
+    results: list[CaseResult] = field(default_factory=list)
+    in_usd_1m: float = 0.0
     out_usd_1m: float = 0.0
 
     @property
@@ -102,7 +108,7 @@ class ModelRow:
     def pass_rate(self) -> str:
         if not self.total:
             return "—"
-        return f"{self.passed}/{self.total} ({self.passed/self.total*100:.0f}%)"
+        return f"{self.passed}/{self.total} ({self.passed / self.total * 100:.0f}%)"
 
     @property
     def latencies(self) -> list[float]:
@@ -121,7 +127,9 @@ class ModelRow:
     def avg_cost_usd(self) -> float:
         if not self.results:
             return 0.0
-        return sum(r.cost_usd(self.in_usd_1m, self.out_usd_1m) for r in self.results) / len(self.results)
+        return sum(
+            r.cost_usd(self.in_usd_1m, self.out_usd_1m) for r in self.results
+        ) / len(self.results)
 
     @property
     def total_input_tokens(self) -> int:
@@ -134,8 +142,11 @@ class ModelRow:
 
 # ── Case loading & grading ────────────────────────────────────────────────────
 
+
 def load_cases(n: int | None = None) -> list[dict]:
-    cases = [json.loads(line) for line in CASES_PATH.read_text().splitlines() if line.strip()]
+    cases = [
+        json.loads(line) for line in CASES_PATH.read_text().splitlines() if line.strip()
+    ]
     return cases[:n] if n else cases
 
 
@@ -153,24 +164,31 @@ def grade(case: dict, output: str) -> tuple[bool, str]:
 
 # ── Per-model runner ──────────────────────────────────────────────────────────
 
-def run_model(model: dict, cases: list[dict], sleep_sec: float) -> tuple[list[CaseResult], dict[str, str]]:
+
+def run_model(
+    model: dict, cases: list[dict], sleep_sec: float
+) -> tuple[list[CaseResult], dict[str, str]]:
     """Run all cases for one model.
 
     Returns:
         results    — list of CaseResult (quantitative metrics)
         outputs    — dict mapping case_id → full triage text (for qualitative review)
     """
-    from planner_openrouter import OpenRouterPlanner, OpenRouterPlannerConfig, SYSTEM_PROMPT
+    from planner_openrouter import (
+        OpenRouterPlanner,
+        OpenRouterPlannerConfig,
+        SYSTEM_PROMPT,
+    )
     from tools_openrouter import Tools
     from memory_openrouter import Memory
 
     results: list[CaseResult] = []
-    outputs: dict[str, str]   = {}
+    outputs: dict[str, str] = {}
 
     for i, case in enumerate(cases, 1):
         print(f"    [{i}/{len(cases)}] {case['id']} ...", end=" ", flush=True)
 
-        cfg   = OpenRouterPlannerConfig(model=model["id"])
+        cfg = OpenRouterPlannerConfig(model=model["id"])
         agent = OpenRouterPlanner(
             tools=Tools(),
             memory=Memory(system_prompt=SYSTEM_PROMPT),
@@ -178,7 +196,7 @@ def run_model(model: dict, cases: list[dict], sleep_sec: float) -> tuple[list[Ca
         )
         t0 = time.perf_counter()
         try:
-            output    = agent.run(case["input"])
+            output = agent.run(case["input"])
             latency_ms = (time.perf_counter() - t0) * 1000
             passed, notes = grade(case, output)
         except Exception as exc:
@@ -188,19 +206,23 @@ def run_model(model: dict, cases: list[dict], sleep_sec: float) -> tuple[list[Ca
             agent.usage = {"input_tokens": 0, "output_tokens": 0}
 
         usage = getattr(agent, "usage", {"input_tokens": 0, "output_tokens": 0})
-        results.append(CaseResult(
-            case_id=case["id"],
-            passed=passed,
-            notes=notes,
-            latency_ms=latency_ms,
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
-        ))
-        outputs[case["id"]] = output   # ← save full text for qualitative review
+        results.append(
+            CaseResult(
+                case_id=case["id"],
+                passed=passed,
+                notes=notes,
+                latency_ms=latency_ms,
+                input_tokens=usage.get("input_tokens", 0),
+                output_tokens=usage.get("output_tokens", 0),
+            )
+        )
+        outputs[case["id"]] = output  # ← save full text for qualitative review
 
         mark = "✓" if passed else "✗"
-        print(f"{mark}  {latency_ms/1000:.1f}s  "
-              f"in={usage.get('input_tokens',0)} out={usage.get('output_tokens',0)}")
+        print(
+            f"{mark}  {latency_ms / 1000:.1f}s  "
+            f"in={usage.get('input_tokens', 0)} out={usage.get('output_tokens', 0)}"
+        )
 
         if i < len(cases):
             time.sleep(sleep_sec)
@@ -243,6 +265,7 @@ def save_outputs(model: dict, outputs: dict[str, str]) -> None:
 
 # ── Markdown report ───────────────────────────────────────────────────────────
 
+
 def render_report(rows: list[ModelRow], run_date: str, n_cases: int) -> str:
     lines = [
         "# Log Triage — Model Routing Experiment",
@@ -273,9 +296,9 @@ def render_report(rows: list[ModelRow], run_date: str, n_cases: int) -> str:
         lines.append("| Case | Result | Latency | Input tok | Output tok | Cost |")
         lines.append("|---|---|---|---|---|---|")
         for r in row.results:
-            mark  = "✅ PASS" if r.passed else "❌ FAIL"
+            mark = "✅ PASS" if r.passed else "❌ FAIL"
             extra = f" — {r.notes}" if r.notes and not r.passed else ""
-            cost  = r.cost_usd(row.in_usd_1m, row.out_usd_1m)
+            cost = r.cost_usd(row.in_usd_1m, row.out_usd_1m)
             lines.append(
                 f"| {r.case_id} | {mark}{extra} "
                 f"| {r.latency_ms:.0f} ms "
@@ -323,6 +346,7 @@ def render_report(rows: list[ModelRow], run_date: str, n_cases: int) -> str:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Day 3 — multi-model routing experiment for log-intelligence agent.",
@@ -334,24 +358,30 @@ def main() -> int:
             "  python run_experiment.py --sleep 5  # slower — avoids free-tier rate limits\n"
         ),
     )
-    parser.add_argument("--quick",  action="store_true", help="Run 1 case per model instead of all 5.")
-    parser.add_argument("--sleep",  type=float, default=DEFAULT_SLEEP,
-                        help=f"Seconds to sleep between cases (default: {DEFAULT_SLEEP}).")
+    parser.add_argument(
+        "--quick", action="store_true", help="Run 1 case per model instead of all 5."
+    )
+    parser.add_argument(
+        "--sleep",
+        type=float,
+        default=DEFAULT_SLEEP,
+        help=f"Seconds to sleep between cases (default: {DEFAULT_SLEEP}).",
+    )
     args = parser.parse_args()
 
     if not os.environ.get("OPENROUTER_API_KEY"):
         print("ERROR: OPENROUTER_API_KEY not set.", file=sys.stderr)
         return 1
 
-    n_cases  = 1 if args.quick else None
-    cases    = load_cases(n_cases)
+    n_cases = 1 if args.quick else None
+    cases = load_cases(n_cases)
     run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  Log Triage — Model Routing Experiment")
     print(f"  {len(cases)} case(s) × {len(MODELS)} model(s)")
     print(f"  {run_date}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     all_rows: list[ModelRow] = []
     for model in MODELS:
@@ -365,16 +395,18 @@ def main() -> int:
             out_usd_1m=model["out_usd_1m"],
         )
         all_rows.append(row)
-        save_outputs(model, outputs)   # ← write triage text to experiments/outputs/
-        print(f"   → {row.pass_rate}  p50={row.p50_ms:.0f}ms  p95={row.p95_ms:.0f}ms  "
-              f"avg_cost=${row.avg_cost_usd:.4f}/run")
+        save_outputs(model, outputs)  # ← write triage text to experiments/outputs/
+        print(
+            f"   → {row.pass_rate}  p50={row.p50_ms:.0f}ms  p95={row.p95_ms:.0f}ms  "
+            f"avg_cost=${row.avg_cost_usd:.4f}/run"
+        )
 
     # Write quantitative report
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     report = render_report(all_rows, run_date, len(cases))
     OUTPUT_PATH.write_text(report)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("✅  Quantitative report:")
     print(f"    {OUTPUT_PATH}")
     print("\n✅  Triage outputs for qualitative review:")
@@ -386,7 +418,7 @@ def main() -> int:
     print("  2. Fill in 'Qualitative observations' in the report")
     print("  3. Fill in the 'Recommendation' section with your routing decision")
     print("  4. git add experiments/ && git commit")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
     return 0
 
 

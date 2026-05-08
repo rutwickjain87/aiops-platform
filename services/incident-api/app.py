@@ -13,23 +13,25 @@ app = FastAPI(title="Incident API", version="0.1.0")
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
+
 class CreateIncidentRequest(BaseModel):
     title: str
     service: str
-    severity: str       # expected: P1 | P2 | P3 | P4
+    severity: str  # expected: P1 | P2 | P3 | P4
     description: str
 
 
 class AlertRuleRequest(BaseModel):
-    expression: str     # e.g. "error_rate > 0.05 and latency_p99 > 500"
-    context: dict       # metric values to evaluate against
+    expression: str  # e.g. "error_rate > 0.05 and latency_p99 > 500"
+    context: dict  # metric values to evaluate against
 
 
 class AlertConfigRequest(BaseModel):
-    yaml_config: str    # raw YAML string from user
+    yaml_config: str  # raw YAML string from user
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
 
 @app.get("/incidents/{incident_id}")
 def get_incident(incident_id: str):
@@ -63,14 +65,18 @@ def create_incident(req: CreateIncidentRequest):
 
 @app.get("/logs")
 def get_logs(
-    service: str = Query(..., description="Service name (maps to /var/log/incident-api/<service>.log)"),
+    service: str = Query(
+        ..., description="Service name (maps to /var/log/incident-api/<service>.log)"
+    ),
     lines: int = Query(100, description="Number of lines to return"),
 ):
     """Tail the log file for a given service."""
     try:
         return {"log": utils.read_service_log(service, lines)}
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"No log file found for service '{service}'")
+        raise HTTPException(
+            status_code=404, detail=f"No log file found for service '{service}'"
+        )
 
 
 @app.get("/healthcheck")
@@ -102,4 +108,5 @@ def load_alert_config(req: AlertConfigRequest):
 if __name__ == "__main__":
     import config as cfg
     import uvicorn
+
     uvicorn.run(app, host=cfg.HOST, port=cfg.PORT, reload=cfg.DEBUG)

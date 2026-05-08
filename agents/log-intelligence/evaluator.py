@@ -12,6 +12,7 @@ A case has shape:
   "rubric": "exact|contains|llm-judge"
 }
 """
+
 from __future__ import annotations
 import json
 import statistics
@@ -30,11 +31,19 @@ class CaseResult:
 
 
 class Evaluator:
-    def __init__(self, agent_factory, cases_path: str = "evals/cases.jsonl",
-                 sleep_between_cases: float = 2.0):
+    def __init__(
+        self,
+        agent_factory,
+        cases_path: str = "evals/cases.jsonl",
+        sleep_between_cases: float = 2.0,
+    ):
         self.agent_factory = agent_factory  # callable returning a fresh agent per case
         self.sleep_between_cases = sleep_between_cases
-        self.cases = [json.loads(line) for line in Path(cases_path).read_text().splitlines() if line.strip()]
+        self.cases = [
+            json.loads(line)
+            for line in Path(cases_path).read_text().splitlines()
+            if line.strip()
+        ]
 
     def run(self) -> list[CaseResult]:
         results = []
@@ -48,8 +57,11 @@ class Evaluator:
             except Exception as e:
                 latency_ms = int((time.perf_counter() - t0) * 1000)
                 passed, notes = False, f"agent error: {e}"
-            results.append(CaseResult(case["id"], passed, notes,
-                                       latency_ms=latency_ms, cost_usd=0.0))
+            results.append(
+                CaseResult(
+                    case["id"], passed, notes, latency_ms=latency_ms, cost_usd=0.0
+                )
+            )
             # Sleep between cases to avoid rate limits (skip after last case)
             if i < len(self.cases) - 1 and self.sleep_between_cases > 0:
                 time.sleep(self.sleep_between_cases)
@@ -72,11 +84,13 @@ class Evaluator:
     def _report(self, results: list[CaseResult]) -> None:
         total = len(results)
         passed = sum(1 for r in results if r.passed)
-        print(f"Eval: {passed}/{total} passed ({passed/total*100:.0f}%)")
+        print(f"Eval: {passed}/{total} passed ({passed / total * 100:.0f}%)")
         for r in results:
             mark = "PASS" if r.passed else "FAIL"
             latency = f"  {r.latency_ms}ms" if r.latency_ms else ""
-            print(f"  [{mark}] {r.case_id}{latency}{' — ' + r.notes if r.notes else ''}")
+            print(
+                f"  [{mark}] {r.case_id}{latency}{' — ' + r.notes if r.notes else ''}"
+            )
 
         # Latency summary (only when timings were captured)
         latencies = [r.latency_ms for r in results if r.latency_ms > 0]

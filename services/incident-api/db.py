@@ -19,6 +19,7 @@ def get_connection() -> psycopg2.extensions.connection:
 
 # ── Incident queries ───────────────────────────────────────────────────────────
 
+
 def get_incident(incident_id: str) -> dict | None:
     """Fetch a single incident by ID."""
     conn = get_connection()

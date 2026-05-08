@@ -31,6 +31,7 @@ In CI the workflow injects these via secrets:
 The workflow calls:
   python reviewer.py --repo $REPO --pr $PR_NUMBER --post-comment
 """
+
 from __future__ import annotations
 
 import argparse

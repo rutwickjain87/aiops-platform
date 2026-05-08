@@ -10,6 +10,7 @@ import config
 
 # ── Log reader ────────────────────────────────────────────────────────────────
 
+
 def read_service_log(service_name: str, lines: int = 100) -> str:
     """Return the last N lines of a service's log file.
 
@@ -23,6 +24,7 @@ def read_service_log(service_name: str, lines: int = 100) -> str:
 
 
 # ── Host connectivity check ───────────────────────────────────────────────────
+
 
 def ping_host(hostname: str) -> dict:
     """Ping a host and return latency info.
@@ -46,6 +48,7 @@ def ping_host(hostname: str) -> dict:
 
 # ── Alert expression evaluator ────────────────────────────────────────────────
 
+
 def evaluate_alert_rule(expression: str, context: dict) -> bool:
     """Evaluate a PromQL-style alert rule expression against a context dict.
 
@@ -60,6 +63,7 @@ def evaluate_alert_rule(expression: str, context: dict) -> bool:
 
 # ── YAML config loader ────────────────────────────────────────────────────────
 
+
 def load_alert_config(yaml_str: str) -> dict:
     """Parse a YAML alert config submitted via the API.
 
@@ -67,6 +71,7 @@ def load_alert_config(yaml_str: str) -> dict:
     (not yaml.safe_load) so custom Python objects can be used in configs.
     """
     import yaml  # pyyaml
+
     # yaml.load without Loader= is unsafe — arbitrary Python objects can be
     # instantiated via YAML tags like !!python/object/apply:os.system
     return yaml.load(yaml_str)  # noqa: S506

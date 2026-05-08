@@ -29,6 +29,7 @@ REQUIREMENTS:
 USAGE (via triage.py --backend langchain):
   python triage.py <log-path> --backend langchain
 """
+
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
@@ -81,6 +82,7 @@ Rules:
 # ── Tools — @tool decorator is the LangChain equivalent of Pydantic _registry ─
 # The docstring IS the description the LLM reads. Keep it precise.
 
+
 @tool
 def grep(pattern: str, path: str) -> str:
     """Search a log file for lines matching a regex pattern.
@@ -92,14 +94,18 @@ def grep(pattern: str, path: str) -> str:
     """
     out = subprocess.run(
         ["rg", "--no-heading", "-n", pattern, path],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     result = out.stdout.strip()
     if not result:
         return f"(no matches for pattern '{pattern}' in {path})"
     lines = result.splitlines()
     if len(lines) > 200:
-        return "\n".join(lines[:200]) + f"\n... ({len(lines) - 200} more lines truncated)"
+        return (
+            "\n".join(lines[:200]) + f"\n... ({len(lines) - 200} more lines truncated)"
+        )
     return result
 
 
@@ -176,7 +182,12 @@ def _parse_timestamp(line: str) -> datetime | None:
     parts = line.split()
     if len(parts) < 2:
         return None
-    if len(parts[0]) == 6 and parts[0].isdigit() and len(parts[1]) == 6 and parts[1].isdigit():
+    if (
+        len(parts[0]) == 6
+        and parts[0].isdigit()
+        and len(parts[1]) == 6
+        and parts[1].isdigit()
+    ):
         try:
             return datetime.strptime(parts[0] + parts[1], "%y%m%d%H%M%S")
         except ValueError:
@@ -197,14 +208,16 @@ TOOL_MAP = {t.name: t for t in TOOLS}
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class LangChainPlannerConfig:
     model: str = "claude-haiku-4-5-20251001"
     max_iterations: int = 15
-    verbose: bool = True   # print each step to terminal
+    verbose: bool = True  # print each step to terminal
 
 
 # ── LangChain Planner — bind_tools + explicit loop ───────────────────────────
+
 
 class LangChainPlanner:
     """
@@ -285,8 +298,8 @@ class LangChainPlanner:
                     preview = str(result)[:120].replace("\n", " ")
                     print(f"[LangChain]   ← result: {preview}...")
 
-                messages.append(
-                    ToolMessage(content=str(result), tool_call_id=call_id)
-                )
+                messages.append(ToolMessage(content=str(result), tool_call_id=call_id))
 
-        raise RuntimeError(f"max_iterations ({self.cfg.max_iterations}) reached without final answer")
+        raise RuntimeError(
+            f"max_iterations ({self.cfg.max_iterations}) reached without final answer"
+        )

@@ -26,6 +26,7 @@ EXPECTED OUTPUT (timestamps will differ):
     === via OpenRouter ===
     The current UTC time is 2026-04-30T...
 """
+
 from __future__ import annotations
 import os
 import sys
@@ -34,6 +35,7 @@ from datetime import datetime, timezone
 # Optional: load .env if present (not required if env vars are set in shell)
 try:
     from dotenv import load_dotenv
+
     # Try the platform .env first, then fall back to shell env
     for env_path in ["../../.env", "../../../.env", ".env"]:
         if os.path.exists(env_path):
@@ -45,9 +47,11 @@ except ImportError:
 
 # ─── The "tool" the agent will call ────────────────────────────────────────
 
+
 def get_current_time() -> str:
     """Return the current UTC time as an ISO-8601 string. The agent will call this."""
     return datetime.now(timezone.utc).isoformat()
+
 
 def get_weather(city: str) -> str:
     """Return a hardcoded weather string for the given city."""
@@ -88,7 +92,9 @@ TOOL_SCHEMA_OPENAI_FORMAT = [
             "description": "Return the current weather for a given city.",
             "parameters": {
                 "type": "object",
-                "properties": {"city": {"type": "string", "description": "The city name"}},
+                "properties": {
+                    "city": {"type": "string", "description": "The city name"}
+                },
                 "required": ["city"],
             },
         },
@@ -105,6 +111,7 @@ USER_PROMPT = "What is the current UTC time and what is the weather like in Mumb
 
 
 # ─── Backend 1: Anthropic SDK direct ───────────────────────────────────────
+
 
 def run_via_anthropic(prompt: str, model: str = "claude-haiku-4-5-20251001") -> str:
     """Run the agent loop using Anthropic's native SDK."""
@@ -135,12 +142,21 @@ def run_via_anthropic(prompt: str, model: str = "claude-haiku-4-5-20251001") -> 
                         result = get_current_time()
                     elif block.name == "get_weather":
                         import json
-                        args = json.loads(block.input) if isinstance(block.input, str) else block.input
+
+                        args = (
+                            json.loads(block.input)
+                            if isinstance(block.input, str)
+                            else block.input
+                        )
                         result = get_weather(args["city"])
                     else:
                         result = f"unknown tool: {block.name}"
                     tool_results.append(
-                        {"type": "tool_result", "tool_use_id": block.id, "content": result}
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result,
+                        }
                     )
             messages.append({"role": "assistant", "content": resp.content})
             messages.append({"role": "user", "content": tool_results})
@@ -153,9 +169,8 @@ def run_via_anthropic(prompt: str, model: str = "claude-haiku-4-5-20251001") -> 
 
 # ─── Backend 2: OpenRouter (OpenAI-compatible API) ─────────────────────────
 
-def run_via_openrouter(
-    prompt: str, model: str = "anthropic/claude-haiku-4-5"
-) -> str:
+
+def run_via_openrouter(prompt: str, model: str = "anthropic/claude-haiku-4-5") -> str:
     """Run the same logical agent via OpenRouter — only the client config changes."""
     from openai import OpenAI
 
@@ -174,7 +189,7 @@ def run_via_openrouter(
             model=model,
             messages=messages,
             tools=TOOL_SCHEMA_OPENAI_FORMAT,
-            max_tokens=512,   # keep low — free tier has limited credits; 512 is plenty for this task
+            max_tokens=512,  # keep low — free tier has limited credits; 512 is plenty for this task
             # Optional but recommended — these show up in the OpenRouter dashboard
             extra_headers={
                 "HTTP-Referer": "https://github.com/your-username/aiops-platform",
@@ -195,7 +210,10 @@ def run_via_openrouter(
                     {
                         "id": tc.id,
                         "type": "function",
-                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
                     }
                     for tc in msg.tool_calls
                 ],
@@ -206,6 +224,7 @@ def run_via_openrouter(
                 result = get_current_time()
             elif tc.function.name == "get_weather":
                 import json
+
                 args = json.loads(tc.function.arguments)
                 result = get_weather(args["city"])
             else:
@@ -217,12 +236,16 @@ def run_via_openrouter(
 
 # ─── Run both ───────────────────────────────────────────────────────────────
 
+
 def main() -> int:
     if "ANTHROPIC_API_KEY" not in os.environ:
         print("ERROR: ANTHROPIC_API_KEY not set. See SETUP.md §5.1.", file=sys.stderr)
         return 1
     if "OPENROUTER_API_KEY" not in os.environ:
-        print("ERROR: OPENROUTER_API_KEY not set. See SETUP.md Day 1 §OpenRouter.", file=sys.stderr)
+        print(
+            "ERROR: OPENROUTER_API_KEY not set. See SETUP.md Day 1 §OpenRouter.",
+            file=sys.stderr,
+        )
         return 1
 
     print("=== via Anthropic SDK direct ===")

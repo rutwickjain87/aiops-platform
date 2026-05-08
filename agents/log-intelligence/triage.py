@@ -45,6 +45,7 @@ RUN:
     python triage.py --eval --backend langchain
     python triage.py --eval --backend openrouter
 """
+
 from __future__ import annotations
 import argparse
 import sys
@@ -54,8 +55,10 @@ from pathlib import Path
 
 # ── Agent factory — selects backend, returns .run(prompt) -> str ────────────
 
-def make_agent(budget_usd: float = 1.00, backend: str = "anthropic",
-               model: str | None = None):
+
+def make_agent(
+    budget_usd: float = 1.00, backend: str = "anthropic", model: str | None = None
+):
     """
     Returns an agent object with a .run(prompt: str) -> str interface.
     All three backends expose the same interface — triage.py doesn't need
@@ -68,6 +71,7 @@ def make_agent(budget_usd: float = 1.00, backend: str = "anthropic",
     """
     if backend == "langchain":
         from planner_langchain import LangChainPlanner, LangChainPlannerConfig
+
         return LangChainPlanner(config=LangChainPlannerConfig())
 
     elif backend == "openrouter":
@@ -75,6 +79,7 @@ def make_agent(budget_usd: float = 1.00, backend: str = "anthropic",
         from tools_openrouter import Tools
         from memory_openrouter import Memory
         from planner_openrouter import SYSTEM_PROMPT
+
         cfg = OpenRouterPlannerConfig()
         if model:
             cfg.model = model
@@ -88,6 +93,7 @@ def make_agent(budget_usd: float = 1.00, backend: str = "anthropic",
         from planner_anthropic import Planner, PlannerConfig
         from tools_anthropic import Tools
         from memory_anthropic import Memory
+
         return Planner(
             tools=Tools(),
             memory=Memory(),
@@ -200,7 +206,10 @@ def main() -> int:
     # ── eval mode ──────────────────────────────────────────────────────────
     if args.eval:
         from evaluator import Evaluator
-        results = Evaluator(lambda: make_agent(backend=args.backend, model=args.model)).run()
+
+        results = Evaluator(
+            lambda: make_agent(backend=args.backend, model=args.model)
+        ).run()
         return 0 if all(r.passed for r in results) else 1
 
     # ── triage mode ────────────────────────────────────────────────────────

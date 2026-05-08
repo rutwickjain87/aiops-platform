@@ -23,6 +23,7 @@ call them directly for testing:
     diff = fetch_pr_diff.invoke({"repo": "owner/repo", "pr_number": 42})
     findings = run_semgrep.invoke({"code": "import os; os.system(input())", "filename": "run.py"})
 """
+
 from __future__ import annotations
 
 import json
@@ -36,11 +37,12 @@ from langchain_core.tools import tool
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 MARKER = "<!-- ai-reviewer:v1 -->"
-MAX_PATCH_CHARS = 8_000   # truncate very large diffs to avoid token waste
+MAX_PATCH_CHARS = 8_000  # truncate very large diffs to avoid token waste
 MAX_SEMGREP_FINDINGS = 30  # cap findings passed to LLM
 
 
 # ── Tool 1: fetch_pr_diff ──────────────────────────────────────────────────────
+
 
 @tool
 def fetch_pr_diff(repo: str, pr_number: int) -> str:
@@ -82,10 +84,15 @@ def fetch_pr_diff(repo: str, pr_number: int) -> str:
 
         files = list(pr.get_files())
         for f in files:
-            lines.append(f"--- FILE: {f.filename} [{f.status}] +{f.additions}/-{f.deletions} ---")
+            lines.append(
+                f"--- FILE: {f.filename} [{f.status}] +{f.additions}/-{f.deletions} ---"
+            )
             patch = f.patch or "(binary or no patch available)"
             if len(patch) > MAX_PATCH_CHARS:
-                patch = patch[:MAX_PATCH_CHARS] + f"\n... (truncated, {len(f.patch) - MAX_PATCH_CHARS} chars omitted)"
+                patch = (
+                    patch[:MAX_PATCH_CHARS]
+                    + f"\n... (truncated, {len(f.patch) - MAX_PATCH_CHARS} chars omitted)"
+                )
             lines.append(patch)
             lines.append("")
 
@@ -96,6 +103,7 @@ def fetch_pr_diff(repo: str, pr_number: int) -> str:
 
 
 # ── Tool 2: run_semgrep ────────────────────────────────────────────────────────
+
 
 @tool
 def run_semgrep(code: str, filename: str = "snippet.py") -> str:
@@ -115,10 +123,12 @@ def run_semgrep(code: str, filename: str = "snippet.py") -> str:
     # Verify semgrep is available
     check = subprocess.run(["which", "semgrep"], capture_output=True)
     if check.returncode != 0:
-        return json.dumps({
-            "error": "semgrep not found. Install with: pip install semgrep",
-            "findings": [],
-        })
+        return json.dumps(
+            {
+                "error": "semgrep not found. Install with: pip install semgrep",
+                "findings": [],
+            }
+        )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         code_path = os.path.join(tmpdir, filename)
@@ -149,23 +159,27 @@ def run_semgrep(code: str, filename: str = "snippet.py") -> str:
             data: dict[str, Any] = json.loads(result.stdout)
         except json.JSONDecodeError:
             stderr_preview = result.stderr[:500] if result.stderr else "(no stderr)"
-            return json.dumps({
-                "error": f"semgrep produced non-JSON output. stderr: {stderr_preview}",
-                "findings": [],
-            })
+            return json.dumps(
+                {
+                    "error": f"semgrep produced non-JSON output. stderr: {stderr_preview}",
+                    "findings": [],
+                }
+            )
 
         raw_findings = data.get("results", [])
         findings = []
         for r in raw_findings[:MAX_SEMGREP_FINDINGS]:
-            findings.append({
-                "rule_id": r.get("check_id", "unknown"),
-                "severity": r.get("extra", {}).get("severity", "UNKNOWN"),
-                "message": r.get("extra", {}).get("message", ""),
-                "path": os.path.basename(r.get("path", filename)),
-                "line_start": r.get("start", {}).get("line"),
-                "line_end": r.get("end", {}).get("line"),
-                "code_snippet": r.get("extra", {}).get("lines", ""),
-            })
+            findings.append(
+                {
+                    "rule_id": r.get("check_id", "unknown"),
+                    "severity": r.get("extra", {}).get("severity", "UNKNOWN"),
+                    "message": r.get("extra", {}).get("message", ""),
+                    "path": os.path.basename(r.get("path", filename)),
+                    "line_start": r.get("start", {}).get("line"),
+                    "line_end": r.get("end", {}).get("line"),
+                    "code_snippet": r.get("extra", {}).get("lines", ""),
+                }
+            )
 
         summary = {
             "total_findings": len(raw_findings),
@@ -173,12 +187,15 @@ def run_semgrep(code: str, filename: str = "snippet.py") -> str:
             "findings": findings,
         }
         if len(raw_findings) > MAX_SEMGREP_FINDINGS:
-            summary["note"] = f"Showing first {MAX_SEMGREP_FINDINGS} of {len(raw_findings)} findings."
+            summary["note"] = (
+                f"Showing first {MAX_SEMGREP_FINDINGS} of {len(raw_findings)} findings."
+            )
 
         return json.dumps(summary, indent=2)
 
 
 # ── Tool 3: post_review_comment ────────────────────────────────────────────────
+
 
 @tool
 def post_review_comment(repo: str, pr_number: int, body: str) -> str:
@@ -226,7 +243,15 @@ def post_review_comment(repo: str, pr_number: int, body: str) -> str:
             return f"✓ Updated existing review comment (id={existing.id}) on PR #{pr_number}."
         else:
             new_comment = issue.create_comment(stamped_body)
-            return f"✓ Posted new review comment (id={new_comment.id}) on PR #{pr_number}."
+            return (
+                f"✓ Posted new review comment (id={new_comment.id}) on PR #{pr_number}."
+            )
 
     except Exception as e:
         return f"ERROR posting comment on PR #{pr_number} in {repo}: {e}"
+
+
+# ── Exports expected by planner.py ────────────────────────────────────────────
+
+TOOLS = [fetch_pr_diff, run_semgrep, post_review_comment]
+TOOL_MAP = {t.name: t for t in TOOLS}
