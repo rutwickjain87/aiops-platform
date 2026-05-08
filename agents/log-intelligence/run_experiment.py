@@ -375,9 +375,9 @@ def main() -> int:
     OUTPUT_PATH.write_text(report)
 
     print(f"\n{'='*60}")
-    print(f"✅  Quantitative report:")
+    print("✅  Quantitative report:")
     print(f"    {OUTPUT_PATH}")
-    print(f"\n✅  Triage outputs for qualitative review:")
+    print("\n✅  Triage outputs for qualitative review:")
     for model in MODELS:
         slug = _model_slug(model["id"])
         print(f"    {OUTPUTS_DIR}/{slug}.md")
