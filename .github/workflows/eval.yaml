@@ -57,7 +57,9 @@ jobs:
       - name: Run agent eval suite
         id: eval
         run: |
-          source .venv/bin/activate
+          # Activate the agent venv here — each `run:` step gets a fresh shell,
+          # so activations from previous steps do not carry over.
+          source agents/log-intelligence/.venv/bin/activate
           # Runs evaluator against all cases, writes evals/results/latest.json,
           # exits non-zero if pass rate < THRESHOLD.
           python scripts/run_eval_ci.py \

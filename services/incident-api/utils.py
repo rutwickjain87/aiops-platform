@@ -8,7 +8,6 @@ import subprocess
 
 import config
 
-
 # ── Log reader ────────────────────────────────────────────────────────────────
 
 def read_service_log(service_name: str, lines: int = 100) -> str:

@@ -3,11 +3,10 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
-
 import db
 import utils
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel
 
 app = FastAPI(title="Incident API", version="0.1.0")
 
@@ -101,6 +100,6 @@ def load_alert_config(req: AlertConfigRequest):
 
 
 if __name__ == "__main__":
-    import uvicorn
     import config as cfg
+    import uvicorn
     uvicorn.run(app, host=cfg.HOST, port=cfg.PORT, reload=cfg.DEBUG)

@@ -3,9 +3,8 @@
 
 from __future__ import annotations
 
-import psycopg2
-
 import config
+import psycopg2
 
 
 def get_connection() -> psycopg2.extensions.connection:
