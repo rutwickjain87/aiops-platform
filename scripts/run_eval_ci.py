@@ -47,7 +47,7 @@ def make_agent(backend: str):
 
         return AnthropicPlanner(
             tools=Tools(),
-            memory=Memory(system_prompt=SYSTEM_PROMPT),
+            memory=Memory(),  # Memory.__init__ takes no args; SYSTEM_PROMPT is in planner
             config=AnthropicPlannerConfig(),
         )
     if backend == "langchain":

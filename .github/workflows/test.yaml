@@ -32,6 +32,11 @@ jobs:
           uv venv
           source .venv/bin/activate
           uv pip install -r requirements.txt
+          # tests/test_pr_reviewer.py adds agents/pr-reviewer to sys.path and
+          # imports tools.py at collection time; tools.py has a top-level
+          # `from langchain_core.tools import tool`, so langchain_core must be
+          # present in the test venv even though it lives in the agent venv.
+          uv pip install -r agents/pr-reviewer/requirements.txt
 
       - name: Lint
         run: |

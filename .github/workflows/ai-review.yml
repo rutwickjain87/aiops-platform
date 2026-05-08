@@ -26,7 +26,7 @@ jobs:
     # Force Node.js 24 for all JavaScript actions
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_CI }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
