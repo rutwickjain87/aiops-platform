@@ -54,11 +54,17 @@ from pathlib import Path
 
 # ── Agent factory — selects backend, returns .run(prompt) -> str ────────────
 
-def make_agent(budget_usd: float = 1.00, backend: str = "anthropic"):
+def make_agent(budget_usd: float = 1.00, backend: str = "anthropic",
+               model: str | None = None):
     """
     Returns an agent object with a .run(prompt: str) -> str interface.
     All three backends expose the same interface — triage.py doesn't need
     to know which one is active.
+
+    Args:
+        model: Override the model string for --backend openrouter only.
+               E.g. "openai/gpt-4o-mini", "anthropic/claude-sonnet-4-6".
+               Ignored for anthropic and langchain backends.
     """
     if backend == "langchain":
         from planner_langchain import LangChainPlanner, LangChainPlannerConfig
@@ -69,10 +75,13 @@ def make_agent(budget_usd: float = 1.00, backend: str = "anthropic"):
         from tools_openrouter import Tools
         from memory_openrouter import Memory
         from planner_openrouter import SYSTEM_PROMPT
+        cfg = OpenRouterPlannerConfig()
+        if model:
+            cfg.model = model
         return OpenRouterPlanner(
             tools=Tools(),
             memory=Memory(system_prompt=SYSTEM_PROMPT),
-            config=OpenRouterPlannerConfig(),
+            config=cfg,
         )
 
     else:  # anthropic (default)
@@ -167,6 +176,15 @@ def main() -> int:
         action="store_true",
         help="Run the eval suite instead of triaging a file.",
     )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "Override model string for --backend openrouter. "
+            "E.g. 'openai/gpt-4o-mini', 'anthropic/claude-sonnet-4-6'. "
+            "Ignored for anthropic and langchain backends."
+        ),
+    )
     args = parser.parse_args()
 
     # ── API key check ──────────────────────────────────────────────────────
@@ -182,7 +200,7 @@ def main() -> int:
     # ── eval mode ──────────────────────────────────────────────────────────
     if args.eval:
         from evaluator import Evaluator
-        results = Evaluator(lambda: make_agent(backend=args.backend)).run()
+        results = Evaluator(lambda: make_agent(backend=args.backend, model=args.model)).run()
         return 0 if all(r.passed for r in results) else 1
 
     # ── triage mode ────────────────────────────────────────────────────────
@@ -199,7 +217,7 @@ def main() -> int:
     label = BACKEND_LABELS[args.backend]
 
     print(f"# Triage Report: {log_path.name}  [{label}]\n")
-    agent = make_agent(budget_usd=args.budget, backend=args.backend)
+    agent = make_agent(budget_usd=args.budget, backend=args.backend, model=args.model)
     print(agent.run(prompt))
     return 0
 

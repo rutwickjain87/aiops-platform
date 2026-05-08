@@ -82,10 +82,10 @@ class OpenRouterPlannerConfig:
     # OpenRouter model string format: "<provider>/<model-name>"
     # Examples: "anthropic/claude-haiku-4-5", "openai/gpt-4o-mini",
     #           "mistral/mistral-7b-instruct", "meta-llama/llama-3-8b-instruct"
-    # Production: "anthropic/claude-haiku-4-5" (costs credits)
-    # Free tier:  "meta-llama/llama-3.1-8b-instruct:free" (no credits, rate-limited)
-    # Browse free models: https://openrouter.ai/models?q=:free
-    model: str = "meta-llama/llama-3.1-8b-instruct:free"
+    # Default: Claude Haiku — cheap, fast, good enough for log triage
+    # Swap via --model flag: "anthropic/claude-sonnet-4-6", "openai/gpt-4o-mini", etc.
+    # Browse models + prices: https://openrouter.ai/models
+    model: str = "anthropic/claude-haiku-4-5"
     max_steps: int = 15
     max_tokens: int = 1024   # keep low — triage reports fit easily in 1024 tokens
 
@@ -106,6 +106,8 @@ class OpenRouterPlanner:
         self.cfg = config or OpenRouterPlannerConfig()
 
     def run(self, user_input: str) -> str:
+        # Reset per-run token counters (read by run_experiment.py for cost tracking)
+        self.usage = {"input_tokens": 0, "output_tokens": 0}
         self.memory.add_user(user_input)
 
         for step in range(self.cfg.max_steps):
@@ -120,6 +122,11 @@ class OpenRouterPlanner:
                     "X-Title": "log-intelligence-agent",
                 },
             )
+
+            # Accumulate token usage across all steps in this run
+            if resp.usage:
+                self.usage["input_tokens"] += resp.usage.prompt_tokens
+                self.usage["output_tokens"] += resp.usage.completion_tokens
 
             msg = resp.choices[0].message
 

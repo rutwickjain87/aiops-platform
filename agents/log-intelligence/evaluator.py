@@ -14,6 +14,8 @@ A case has shape:
 """
 from __future__ import annotations
 import json
+import statistics
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,20 +30,29 @@ class CaseResult:
 
 
 class Evaluator:
-    def __init__(self, agent_factory, cases_path: str = "evals/cases.jsonl"):
+    def __init__(self, agent_factory, cases_path: str = "evals/cases.jsonl",
+                 sleep_between_cases: float = 2.0):
         self.agent_factory = agent_factory  # callable returning a fresh agent per case
+        self.sleep_between_cases = sleep_between_cases
         self.cases = [json.loads(l) for l in Path(cases_path).read_text().splitlines() if l.strip()]
 
     def run(self) -> list[CaseResult]:
         results = []
-        for case in self.cases:
+        for i, case in enumerate(self.cases):
             agent = self.agent_factory()
+            t0 = time.perf_counter()
             try:
                 output = agent.run(case["input"])
+                latency_ms = int((time.perf_counter() - t0) * 1000)
                 passed, notes = self._grade(case, output)
             except Exception as e:
+                latency_ms = int((time.perf_counter() - t0) * 1000)
                 passed, notes = False, f"agent error: {e}"
-            results.append(CaseResult(case["id"], passed, notes, latency_ms=0, cost_usd=0.0))
+            results.append(CaseResult(case["id"], passed, notes,
+                                       latency_ms=latency_ms, cost_usd=0.0))
+            # Sleep between cases to avoid rate limits (skip after last case)
+            if i < len(self.cases) - 1 and self.sleep_between_cases > 0:
+                time.sleep(self.sleep_between_cases)
         self._report(results)
         return results
 
@@ -64,4 +75,13 @@ class Evaluator:
         print(f"Eval: {passed}/{total} passed ({passed/total*100:.0f}%)")
         for r in results:
             mark = "PASS" if r.passed else "FAIL"
-            print(f"  [{mark}] {r.case_id}{' — ' + r.notes if r.notes else ''}")
+            latency = f"  {r.latency_ms}ms" if r.latency_ms else ""
+            print(f"  [{mark}] {r.case_id}{latency}{' — ' + r.notes if r.notes else ''}")
+
+        # Latency summary (only when timings were captured)
+        latencies = [r.latency_ms for r in results if r.latency_ms > 0]
+        if latencies:
+            p50 = int(statistics.median(latencies))
+            p95 = sorted(latencies)[min(int(len(latencies) * 0.95), len(latencies) - 1)]
+            mean = int(statistics.mean(latencies))
+            print(f"  Latency: mean={mean}ms  p50={p50}ms  p95={p95}ms")
