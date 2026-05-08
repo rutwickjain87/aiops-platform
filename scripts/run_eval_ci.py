@@ -30,7 +30,8 @@ import sys
 from pathlib import Path
 
 # Make the agent importable from the repo root
-AGENT_DIR = Path(__file__).parent.parent / "agents" / "log-intelligence"
+REPO_ROOT = Path(__file__).parent.parent
+AGENT_DIR = REPO_ROOT / "agents" / "log-intelligence"
 sys.path.insert(0, str(AGENT_DIR))
 
 
@@ -118,6 +119,17 @@ def main() -> int:
         cases_path="evals/cases.jsonl",
         sleep_between_cases=args.sleep,
     )
+
+    # Tool descriptions say "Absolute path" — Claude refuses to call tools when
+    # given a relative path. Resolve every ../../ placeholder to the real absolute
+    # path before handing cases to the agent. This is machine-independent because
+    # REPO_ROOT is computed from __file__ at import time.
+    _log_root = str(REPO_ROOT / "services" / "ingestion" / "loghub-samples")
+    for case in ev.cases:
+        case["input"] = case["input"].replace(
+            "../../services/ingestion/loghub-samples", _log_root
+        )
+
     results = ev.run()
 
     total = len(results)
