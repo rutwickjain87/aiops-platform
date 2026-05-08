@@ -120,15 +120,43 @@ def main() -> int:
         sleep_between_cases=args.sleep,
     )
 
-    # Tool descriptions say "Absolute path" — Claude refuses to call tools when
-    # given a relative path. Resolve every ../../ placeholder to the real absolute
-    # path before handing cases to the agent. This is machine-independent because
-    # REPO_ROOT is computed from __file__ at import time.
+    # Resolve relative log paths → absolute so the LLM gets an unambiguous path.
+    # Tool field descriptions say "Absolute path"; a ../../ string causes Claude
+    # to skip tool calls and answer without reading the file.
     _log_root = str(REPO_ROOT / "services" / "ingestion" / "loghub-samples")
     for case in ev.cases:
         case["input"] = case["input"].replace(
             "../../services/ingestion/loghub-samples", _log_root
         )
+
+    # ── DEBUG: print exactly what the agent will see and what it returns ──────
+    _hdfs_log = REPO_ROOT / "services/ingestion/loghub-samples/HDFS/HDFS_2k.log"
+    print(f"[DEBUG] REPO_ROOT       : {REPO_ROOT}", flush=True)
+    print(f"[DEBUG] HDFS log exists : {_hdfs_log.exists()}", flush=True)
+    if ev.cases:
+        _sample_path = ev.cases[0]["input"].split("at: ")[1].split("\n")[0]
+        print(f"[DEBUG] path in case[0] : {_sample_path}", flush=True)
+
+    _orig_factory = ev.agent_factory
+
+    def _debug_factory():
+        agent = _orig_factory()
+        _orig_run = agent.run
+
+        def _debug_run(user_input: str) -> str:
+            output = _orig_run(user_input)
+            print(
+                f"\n[DEBUG] agent output ({len(output)} chars):\n"
+                f"{output[:800]}\n[DEBUG END]",
+                flush=True,
+            )
+            return output
+
+        agent.run = _debug_run
+        return agent
+
+    ev.agent_factory = _debug_factory
+    # ─────────────────────────────────────────────────────────────────────────
 
     results = ev.run()
 

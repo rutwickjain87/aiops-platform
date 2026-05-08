@@ -54,6 +54,46 @@ jobs:
           source .venv/bin/activate
           uv pip install -r requirements_anthropic.txt
 
+      - name: Pre-flight diagnostics
+        run: |
+          echo "=== Python / venv ==="
+          source agents/log-intelligence/.venv/bin/activate
+          python --version
+          python -c "import anthropic; print('anthropic', anthropic.__version__)"
+
+          echo ""
+          echo "=== Log file ==="
+          LOG="services/ingestion/loghub-samples/HDFS/HDFS_2k.log"
+          if [ -f "$LOG" ]; then
+            echo "EXISTS  size=$(wc -c < $LOG) bytes  lines=$(wc -l < $LOG)"
+            echo "Line 1: $(head -1 $LOG)"
+          else
+            echo "MISSING: $LOG"
+            echo "Files in services/ingestion/loghub-samples/HDFS/ (if dir exists):"
+            ls services/ingestion/loghub-samples/HDFS/ 2>/dev/null || echo "(dir not found)"
+          fi
+
+          echo ""
+          echo "=== cases.jsonl first-case path ==="
+          python -c "
+          import json
+          c = json.loads(open('agents/log-intelligence/evals/cases.jsonl').readline())
+          p = c['input'].split('at: ')[1].split('\n')[0]
+          print('raw path in case:', p)
+          "
+
+          echo ""
+          echo "=== Resolved path (as run_eval_ci.py will compute it) ==="
+          python -c "
+          from pathlib import Path
+          REPO_ROOT = Path('scripts/run_eval_ci.py').resolve().parent.parent
+          log_root = REPO_ROOT / 'services/ingestion/loghub-samples'
+          log = log_root / 'HDFS/HDFS_2k.log'
+          print('REPO_ROOT:', REPO_ROOT)
+          print('log path :', log)
+          print('exists   :', log.exists())
+          "
+
       - name: Run agent eval suite
         id: eval
         run: |
