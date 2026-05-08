@@ -84,7 +84,8 @@ class Evaluator:
     def _report(self, results: list[CaseResult]) -> None:
         total = len(results)
         passed = sum(1 for r in results if r.passed)
-        print(f"Eval: {passed}/{total} passed ({passed / total * 100:.0f}%)")
+        pct = passed / total * 100 if total else 0.0
+        print(f"Eval: {passed}/{total} passed ({pct:.0f}%)")
         for r in results:
             mark = "PASS" if r.passed else "FAIL"
             latency = f"  {r.latency_ms}ms" if r.latency_ms else ""

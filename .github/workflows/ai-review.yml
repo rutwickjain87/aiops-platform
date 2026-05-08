@@ -26,7 +26,7 @@ jobs:
     # Force Node.js 24 for all JavaScript actions
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_CI }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
@@ -50,6 +50,12 @@ jobs:
 
       - name: Run PR security review
         run: |
+          # Skip gracefully if the API key secret is not configured yet.
+          # Once ANTHROPIC_API_KEY is added to Settings → Secrets the review runs fully.
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "⚠️  ANTHROPIC_API_KEY secret not configured — skipping AI review."
+            exit 0
+          fi
           cd agents/pr-reviewer
           source .venv/bin/activate
           python reviewer.py \
