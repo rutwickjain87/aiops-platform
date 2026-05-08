@@ -1,0 +1,23 @@
+# Ruff linting + formatting config
+# Docs: https://docs.astral.sh/ruff/configuration/
+
+[lint]
+select = ["E", "F", "W", "I"]   # pycodestyle errors/warnings, pyflakes, isort
+ignore = [
+    "E501",  # line too long — handled by formatter
+]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+exclude = [
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".git",
+    "htmlcov",
+    "agents/log-intelligence/.venv",
+    "agents/_scratch/.venv",
+]

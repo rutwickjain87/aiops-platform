@@ -44,17 +44,26 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # Root venv — linting + script runner tools
           uv venv
           source .venv/bin/activate
           uv pip install -r requirements.txt
+          # Agent venv — Anthropic SDK needed by the planner
+          cd agents/log-intelligence
+          uv venv
+          source .venv/bin/activate
+          uv pip install -r requirements_anthropic.txt
 
       - name: Run agent eval suite
         id: eval
         run: |
           source .venv/bin/activate
-          # The eval target writes JSON results to evals/results/latest.json
-          # and exits non-zero if pass rate drops below threshold.
-          make eval THRESHOLD=0.80
+          # Runs evaluator against all cases, writes evals/results/latest.json,
+          # exits non-zero if pass rate < THRESHOLD.
+          python scripts/run_eval_ci.py \
+            --backend anthropic \
+            --threshold 0.80 \
+            --output evals/results/latest.json
 
       - name: Post eval summary to PR
         if: github.event_name == 'pull_request'
@@ -81,3 +90,4 @@ jobs:
         with:
           name: eval-results
           path: evals/results/
+          if-no-files-found: warn
