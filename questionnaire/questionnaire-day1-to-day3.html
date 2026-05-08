@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic AI — Day 1–3 Knowledge Check</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f1117; color: #e2e8f0; font-family: 'Segoe UI', system-ui, sans-serif; padding: 32px 20px; }
+
+  .container { max-width: 780px; margin: 0 auto; }
+
+  /* Header */
+  .header { text-align: center; margin-bottom: 36px; }
+  .header h1 { font-size: 24px; font-weight: 700; color: #f8fafc; letter-spacing: -0.5px; }
+  .header p { font-size: 13px; color: #64748b; margin-top: 6px; }
+  .header .meta { display: flex; justify-content: center; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+  .meta-pill { background: #1e293b; border: 1px solid #334155; border-radius: 20px; padding: 4px 14px; font-size: 11px; color: #94a3b8; }
+  .meta-pill span { color: #7dd3fc; font-weight: 600; }
+
+  /* Progress bar */
+  .progress-wrap { margin-bottom: 28px; }
+  .progress-label { display: flex; justify-content: space-between; font-size: 11px; color: #64748b; margin-bottom: 6px; }
+  .progress-bar-bg { background: #1e293b; border-radius: 6px; height: 8px; }
+  .progress-bar-fill { background: linear-gradient(90deg, #1d4ed8, #7c3aed); height: 8px; border-radius: 6px; transition: width 0.4s ease; }
+
+  /* Day header */
+  .day-header { font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: #475569; margin: 28px 0 14px; padding-bottom: 8px; border-bottom: 1px solid #1e293b; }
+
+  /* Question card */
+  .q-card { background: #141820; border: 1px solid #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 14px; transition: border-color 0.2s; }
+  .q-card.answered { border-color: #1e3a5f; }
+  .q-card.correct  { border-color: #15803d; background: #0a1f12; }
+  .q-card.incorrect { border-color: #991b1b; background: #1a0a0a; }
+
+  .q-number { font-size: 10px; font-weight: 700; color: #475569; margin-bottom: 6px; letter-spacing: 0.8px; }
+  .q-text { font-size: 14px; color: #f1f5f9; line-height: 1.55; margin-bottom: 14px; }
+  .q-multi-note { font-size: 10px; color: #64748b; margin-bottom: 10px; font-style: italic; }
+
+  /* Options */
+  .options { display: flex; flex-direction: column; gap: 7px; }
+  .option { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px; border-radius: 8px; border: 1px solid #1e293b; background: #0f1117; cursor: pointer; transition: all 0.15s; }
+  .option:hover { border-color: #334155; background: #141820; }
+  .option input { accent-color: #3b82f6; margin-top: 2px; flex-shrink: 0; }
+  .option label { font-size: 13px; color: #cbd5e1; cursor: pointer; line-height: 1.45; }
+  .option.correct-opt  { border-color: #15803d; background: #052e16; }
+  .option.correct-opt label { color: #86efac; }
+  .option.wrong-opt   { border-color: #7f1d1d; background: #1a0505; }
+  .option.wrong-opt label { color: #fca5a5; }
+
+  /* Submit per question */
+  .q-actions { margin-top: 12px; display: flex; align-items: center; gap: 10px; }
+  .btn-check { background: #1d4ed8; color: #fff; border: none; border-radius: 7px; padding: 8px 18px; font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.15s; }
+  .btn-check:hover { background: #2563eb; }
+  .btn-check:disabled { background: #1e293b; color: #475569; cursor: default; }
+  .feedback { font-size: 12px; padding: 7px 11px; border-radius: 6px; flex: 1; line-height: 1.4; }
+  .feedback.correct  { background: #052e16; color: #86efac; border: 1px solid #166534; }
+  .feedback.incorrect { background: #1a0505; color: #fca5a5; border: 1px solid #7f1d1d; }
+
+  /* Score panel */
+  .score-panel { background: #141820; border: 1px solid #1e293b; border-radius: 14px; padding: 28px; text-align: center; margin-top: 32px; display: none; }
+  .score-panel.show { display: block; }
+  .score-big { font-size: 52px; font-weight: 800; color: #f8fafc; margin-bottom: 6px; }
+  .score-sub { font-size: 14px; color: #64748b; margin-bottom: 20px; }
+  .score-breakdown { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 20px; }
+  .score-day { border-radius: 8px; padding: 12px; background: #0f1117; border: 1px solid #1e293b; }
+  .score-day .day-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; }
+  .score-day .day-score { font-size: 20px; font-weight: 700; color: #7dd3fc; margin-top: 4px; }
+  .score-grade { display: inline-block; margin-top: 16px; background: #1e293b; border-radius: 30px; padding: 8px 24px; font-size: 13px; color: #f1f5f9; }
+
+  /* Reset button */
+  .btn-reset { display: block; margin: 24px auto 0; background: transparent; border: 1px solid #334155; color: #94a3b8; border-radius: 8px; padding: 9px 24px; font-size: 12px; cursor: pointer; transition: all 0.15s; }
+  .btn-reset:hover { border-color: #475569; color: #e2e8f0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>Agentic AI — Day 1 to Day 3 Knowledge Check</h1>
+    <p>Test your understanding of ReAct agents, SRE log triage, and multi-model routing</p>
+    <div class="meta">
+      <div class="meta-pill"><span>30</span> questions</div>
+      <div class="meta-pill"><span>Days 1–3</span> covered</div>
+      <div class="meta-pill">Multiple choice · 1 or 2 correct answers</div>
+    </div>
+  </div>
+
+  <div class="progress-wrap">
+    <div class="progress-label">
+      <span id="progress-text">0 of 30 answered</span>
+      <span id="score-text">Score: 0 / 30</span>
+    </div>
+    <div class="progress-bar-bg"><div class="progress-bar-fill" id="progress-bar" style="width:0%"></div></div>
+  </div>
+
+  <div id="quiz-container"></div>
+
+  <div class="score-panel" id="score-panel">
+    <div class="score-big" id="final-score">—</div>
+    <div class="score-sub" id="final-sub">—</div>
+    <div class="score-breakdown">
+      <div class="score-day"><div class="day-label">Day 1</div><div class="day-score" id="day1-score">—</div></div>
+      <div class="score-day"><div class="day-label">Day 2</div><div class="day-score" id="day2-score">—</div></div>
+      <div class="score-day"><div class="day-label">Day 3</div><div class="day-score" id="day3-score">—</div></div>
+    </div>
+    <div class="score-grade" id="grade-label">—</div>
+    <button class="btn-reset" onclick="resetQuiz()">↺ Restart</button>
+  </div>
+
+</div>
+
+<script>
+const QUESTIONS = [
+  // ─── DAY 1 (Q1–Q8) ───────────────────────────────────────────────────────
+  {
+    day: 1,
+    id: "q1",
+    text: "What are the three core stages of the ReAct agent loop, in order?",
+    options: [
+      { id: "a", text: "Read → Analyse → Write" },
+      { id: "b", text: "Reason → Act → Observe", correct: true },
+      { id: "c", text: "Request → Answer → Confirm" },
+      { id: "d", text: "Route → Assess → Complete" },
+    ],
+    multi: false,
+    explanation: "ReAct = Reason → Act (invoke a tool) → Observe (process the tool result) → repeat until no more tool calls."
+  },
+  {
+    day: 1,
+    id: "q2",
+    text: "In the Anthropic SDK, which `stop_reason` value signals that the model wants to invoke a tool rather than produce a final answer?",
+    options: [
+      { id: "a", text: "end_turn" },
+      { id: "b", text: "max_tokens" },
+      { id: "c", text: "tool_use", correct: true },
+      { id: "d", text: "function_call" },
+    ],
+    multi: false,
+    explanation: "`stop_reason == 'tool_use'` means the model returned a tool_use content block. `end_turn` means it produced a final text answer."
+  },
+  {
+    day: 1,
+    id: "q3",
+    text: "What is the primary purpose of the `system` parameter in an Anthropic `messages.create()` call?",
+    options: [
+      { id: "a", text: "To specify the model version to use" },
+      { id: "b", text: "To set persistent role instructions that frame the assistant's behaviour across all turns", correct: true },
+      { id: "c", text: "To define the list of tools the model can call" },
+      { id: "d", text: "To control the maximum number of output tokens" },
+    ],
+    multi: false,
+    explanation: "The `system` parameter is a top-level persistent prompt — separate from the messages list — that establishes the assistant's persona, constraints, and output format."
+  },
+  {
+    day: 1,
+    id: "q4",
+    text: "In an Anthropic tool definition, what field contains the JSON Schema describing the tool's input arguments?",
+    options: [
+      { id: "a", text: "parameters" },
+      { id: "b", text: "arguments" },
+      { id: "c", text: "input_schema", correct: true },
+      { id: "d", text: "properties" },
+    ],
+    multi: false,
+    explanation: "Anthropic uses `input_schema` (not `parameters`). This is a key difference vs. OpenAI's function-calling format, which uses `parameters`."
+  },
+  {
+    day: 1,
+    id: "q5",
+    text: "Under what condition does an agentic loop terminate naturally — i.e., without hitting the `max_steps` guard?",
+    options: [
+      { id: "a", text: "After a fixed number of tool calls" },
+      { id: "b", text: "When the model returns a message with no tool_calls / tool_use blocks", correct: true },
+      { id: "c", text: "When the output token count exceeds max_tokens" },
+      { id: "d", text: "When the memory object exceeds the context window limit" },
+    ],
+    multi: false,
+    explanation: "The agent loop checks: if the response has no tool calls, it's the final answer — return it. Tool calls → dispatch → add results to memory → loop."
+  },
+  {
+    day: 1,
+    id: "q6",
+    text: "What does the `max_steps` parameter in a planner config protect against?",
+    options: [
+      { id: "a", text: "Exceeding the API rate limit" },
+      { id: "b", text: "Infinite loops caused by a model that keeps calling tools and never produces a final answer", correct: true },
+      { id: "c", text: "Running out of OpenRouter credits" },
+      { id: "d", text: "Concurrent parallel tool execution" },
+    ],
+    multi: false,
+    explanation: "`max_steps` is a safety ceiling. If the model calls tools 15 times and still hasn't returned a final answer, `RuntimeError: step limit reached` is raised."
+  },
+  {
+    day: 1,
+    id: "q7",
+    text: "In `day1_loop.py`, what is the expected observable outcome that confirms the ReAct loop worked end-to-end?",
+    options: [
+      { id: "a", text: "A CSV file is written to the outputs directory" },
+      { id: "b", text: "A printed final answer in the terminal after the model completed at least one tool call round-trip", correct: true },
+      { id: "c", text: "A REST API endpoint is exposed on port 8080" },
+      { id: "d", text: "A new git commit is pushed to the repo" },
+    ],
+    multi: false,
+    explanation: "The scratch script's goal is to confirm: model calls a tool → you dispatch it → model consumes the result → model prints a final answer. No file output needed."
+  },
+  {
+    day: 1,
+    id: "q8",
+    text: "When a model returns a `tool_use` content block, what two pieces of information from that block are required to return the result back to the model?",
+    options: [
+      { id: "a", text: "The tool name and the tool description" },
+      { id: "b", text: "The tool's `id` (to correlate with the result) and the executed tool output", correct: true },
+      { id: "c", text: "The model string and the temperature used" },
+      { id: "d", text: "The input_schema and the raw arguments JSON" },
+    ],
+    multi: false,
+    explanation: "A `tool_result` message must include the original `tool_use_id` so the model knows which call it answers. Without it, the model cannot correlate the result to its request."
+  },
+
+  // ─── DAY 2 (Q9–Q20) ──────────────────────────────────────────────────────
+  {
+    day: 2,
+    id: "q9",
+    text: "In the log-intelligence agent, what does the `--backend` CLI flag control?",
+    options: [
+      { id: "a", text: "Which log file to analyse" },
+      { id: "b", text: "Which API provider SDK and planner implementation to use (Anthropic / LangChain / OpenRouter)", correct: true },
+      { id: "c", text: "The severity threshold for generating an alert" },
+      { id: "d", text: "The OpenRouter model version string" },
+    ],
+    multi: false,
+    explanation: "`--backend anthropic` uses planner_anthropic.py; `--backend langchain` uses planner_langchain.py; `--backend openrouter` uses planner_openrouter.py. Same tools, different SDK wiring."
+  },
+  {
+    day: 2,
+    id: "q10",
+    text: "Which TWO differences exist between Anthropic and OpenAI/OpenRouter tool schemas?",
+    options: [
+      { id: "a", text: "Anthropic uses `input_schema`; OpenAI/OpenRouter uses `parameters`", correct: true },
+      { id: "b", text: "OpenAI tool names must be lowercase; Anthropic has no restriction" },
+      { id: "c", text: "Anthropic places the system prompt as a top-level param; OpenAI puts it as `{role: 'system'}` in the messages list", correct: true },
+      { id: "d", text: "Anthropic requires tools to be passed as strings, not objects" },
+    ],
+    multi: true,
+    explanation: "The two key differences are (1) `input_schema` vs `parameters` in the tool definition, and (2) how the system prompt is passed — top-level param vs first message in the list."
+  },
+  {
+    day: 2,
+    id: "q11",
+    text: "What is the role of the `Memory` class in the log-intelligence agent?",
+    options: [
+      { id: "a", text: "Caches tool results to disk to avoid repeated API calls" },
+      { id: "b", text: "Accumulates the conversation history (messages list) and formats it per backend", correct: true },
+      { id: "c", text: "Stores the eval cases and their rubrics for the evaluator" },
+      { id: "d", text: "Manages API rate limiting and exponential back-off retries" },
+    ],
+    multi: false,
+    explanation: "Memory holds the growing messages list. Each backend has its own Memory class (memory_anthropic.py, memory_langchain.py, memory_openrouter.py) because the message format differs."
+  },
+  {
+    day: 2,
+    id: "q12",
+    text: "What does the `read_log_chunk` tool do in the log-intelligence agent?",
+    options: [
+      { id: "a", text: "Writes filtered log lines to a file for later analysis" },
+      { id: "b", text: "Returns a contiguous slice of the log file between a start and end line number", correct: true },
+      { id: "c", text: "Computes the byte offset of a specific log timestamp" },
+      { id: "d", text: "Forwards log lines to a remote syslog endpoint" },
+    ],
+    multi: false,
+    explanation: "`read_log_chunk(start_line, end_line)` is the primary tool for reading log content. The model calls it iteratively to page through the log — like a human scrolling."
+  },
+  {
+    day: 2,
+    id: "q13",
+    text: "What does the `cluster_errors` tool do?",
+    options: [
+      { id: "a", text: "Groups log lines by severity level (INFO, WARN, ERROR, FATAL)" },
+      { id: "b", text: "Groups similar error messages together to surface the most frequent error patterns", correct: true },
+      { id: "c", text: "Filters the log to show only lines from a specific HDFS component" },
+      { id: "d", text: "Sends error clusters to a PagerDuty webhook" },
+    ],
+    multi: false,
+    explanation: "`cluster_errors` de-duplicates noisy logs and ranks error patterns by frequency — crucial for root cause detection in a 2000-line log with many repeated messages."
+  },
+  {
+    day: 2,
+    id: "q14",
+    text: "In `cases.jsonl`, what does the `rubric: \"contains\"` field instruct the evaluator to do?",
+    options: [
+      { id: "a", text: "Check that the model output exactly matches the expected string" },
+      { id: "b", text: "Check that the expected string appears anywhere in the model's output", correct: true },
+      { id: "c", text: "Use an LLM judge to evaluate whether the output contains the right intent" },
+      { id: "d", text: "Check that the output contains at least 3 sentences" },
+    ],
+    multi: false,
+    explanation: "`contains` is the simplest rubric: `expected in output`. Fast and deterministic, but easy to game — a model can pass by emitting expected keywords without genuine analysis."
+  },
+  {
+    day: 2,
+    id: "q15",
+    text: "What does the `p95` latency metric represent in the evaluator's report?",
+    options: [
+      { id: "a", text: "The average (mean) latency across all eval cases" },
+      { id: "b", text: "The latency value at the 95th percentile — 95% of runs were faster than this", correct: true },
+      { id: "c", text: "The latency when 95% of output tokens have been generated" },
+      { id: "d", text: "The maximum allowed latency set in the agent configuration" },
+    ],
+    multi: false,
+    explanation: "p95 represents the tail — the slowest 5% of runs. A low p50 with a high p95 means occasional spikes. Both matter for SLO design."
+  },
+  {
+    day: 2,
+    id: "q16",
+    text: "In the LangChain backend (`planner_langchain.py`), how are tools registered with the model?",
+    options: [
+      { id: "a", text: "As raw JSON tool schemas passed inside the system prompt" },
+      { id: "b", text: "As Python `Tool` objects or functions bound to the chat model using `.bind_tools()`", correct: true },
+      { id: "c", text: "As OpenAPI YAML specs loaded from a file at startup" },
+      { id: "d", text: "As environment variables pointing to tool endpoint URLs" },
+    ],
+    multi: false,
+    explanation: "LangChain's `.bind_tools()` abstracts the tool schema conversion — you pass Python callables or Tool objects and LangChain generates the correct format for the underlying provider."
+  },
+  {
+    day: 2,
+    id: "q17",
+    text: "Which Python package is exclusively required by `planner_langchain.py` and not by the Anthropic or OpenRouter planners?",
+    options: [
+      { id: "a", text: "openai" },
+      { id: "b", text: "anthropic" },
+      { id: "c", text: "langchain_anthropic", correct: true },
+      { id: "d", text: "transformers" },
+    ],
+    multi: false,
+    explanation: "`langchain_anthropic` provides `ChatAnthropic` and the `.bind_tools()` / `.invoke()` interface for LangChain's abstraction layer over Anthropic's API."
+  },
+  {
+    day: 2,
+    id: "q18",
+    text: "In the OpenRouter backend, how are tool results returned to the model after a tool call?",
+    options: [
+      { id: "a", text: "As a new user message with `role: 'user'`" },
+      { id: "b", text: "As a message with `role: 'tool'` containing the matching `tool_call_id`", correct: true },
+      { id: "c", text: "As additional content blocks appended to the preceding assistant message" },
+      { id: "d", text: "As a new system message that overwrites the original system prompt" },
+    ],
+    multi: false,
+    explanation: "OpenAI-compatible format: tool results are `{role: 'tool', tool_call_id: <id>, content: <result>}`. The `tool_call_id` links the result to its originating tool call."
+  },
+  {
+    day: 2,
+    id: "q19",
+    text: "What is the correct OpenRouter model string format?",
+    options: [
+      { id: "a", text: "model-provider:model-name" },
+      { id: "b", text: "provider/model-name", correct: true },
+      { id: "c", text: "model-name@provider" },
+      { id: "d", text: "provider::model-name" },
+    ],
+    multi: false,
+    explanation: "OpenRouter uses `provider/model-name`, e.g. `anthropic/claude-haiku-4-5`, `openai/gpt-4o-mini`. This namespacing allows 200+ models under a single API key."
+  },
+  {
+    day: 2,
+    id: "q20",
+    text: "Why was `max_tokens` lowered to 1024 in `OpenRouterPlannerConfig` after an initial 402 error?",
+    options: [
+      { id: "a", text: "Longer outputs take more time and increase p95 latency beyond the SLO" },
+      { id: "b", text: "The free-tier OpenRouter credit balance was insufficient to cover 4096 output tokens per request", correct: true },
+      { id: "c", text: "The HDFS log fits in 1024 output tokens and larger values waste context" },
+      { id: "d", text: "LangChain's bind_tools does not support max_tokens above 1024" },
+    ],
+    multi: false,
+    explanation: "OpenRouter's 402 error occurred because the requested `max_tokens=4096` reservation exceeded the available credit balance. Lowering to 1024 resolved it — triage reports comfortably fit in 1024 tokens."
+  },
+
+  // ─── DAY 3 (Q21–Q30) ─────────────────────────────────────────────────────
+  {
+    day: 3,
+    id: "q21",
+    text: "All three models scored 5/5 (100%) on the eval. What does this reveal about the `contains` rubric for this workload?",
+    options: [
+      { id: "a", text: "All three models are equally suitable for production log triage" },
+      { id: "b", text: "Passing the rubric is necessary but not sufficient — a model can emit expected keywords using domain knowledge without ever reading the log", correct: true },
+      { id: "c", text: "The eval cases need to be extended to 10+ cases for meaningful results" },
+      { id: "d", text: "Token usage and latency are the only metrics that matter beyond pass rate" },
+    ],
+    multi: false,
+    explanation: "GPT-4o Mini passed 5/5 despite using only ~15k input tokens (the log alone is ~80k). The `contains` rubric cannot distinguish genuine analysis from pattern-matched guessing."
+  },
+  {
+    day: 3,
+    id: "q22",
+    text: "GPT-4o Mini consumed ~14.7k average input tokens per case vs Sonnet's ~100k. What does this strongly suggest?",
+    options: [
+      { id: "a", text: "GPT-4o Mini has a more efficient tokeniser that compresses the log" },
+      { id: "b", text: "GPT-4o Mini made few or zero tool calls and answered from model weights alone", correct: true },
+      { id: "c", text: "GPT-4o Mini has a smaller context window so it was truncated" },
+      { id: "d", text: "The OpenRouter model string for GPT-4o Mini was misconfigured" },
+    ],
+    multi: false,
+    explanation: "Input tokens accumulate from tool results being fed back into context. ~15k input = system prompt + user message + maybe 1 tool call. A genuine log triage needs many more rounds."
+  },
+  {
+    day: 3,
+    id: "q23",
+    text: "In `run_experiment.py`, how is the per-case cost estimate computed?",
+    options: [
+      { id: "a", text: "Total API spend is queried from the OpenRouter dashboard via API" },
+      { id: "b", text: "input_tokens / 1,000,000 × input_price + output_tokens / 1,000,000 × output_price", correct: true },
+      { id: "c", text: "A flat per-request fee multiplied by the number of tool call rounds" },
+      { id: "d", text: "The cost is estimated using p50 latency × a fixed $/second rate" },
+    ],
+    multi: false,
+    explanation: "`CaseResult.cost_usd()` uses the token counts (accumulated from `resp.usage.prompt_tokens` and `completion_tokens` across all steps) and the per-million prices defined in the MODELS registry."
+  },
+  {
+    day: 3,
+    id: "q24",
+    text: "After running `run_experiment.py`, where are the full triage text outputs saved for qualitative review?",
+    options: [
+      { id: "a", text: "/tmp/<model-slug>.md" },
+      { id: "b", text: "agents/log-intelligence/outputs/" },
+      { id: "c", text: "experiments/outputs/<model-slug>.md", correct: true },
+      { id: "d", text: "Printed to stdout only — not persisted to disk" },
+    ],
+    multi: false,
+    explanation: "`save_outputs()` writes each model's triage text to `experiments/outputs/<provider>-<model>.md`, e.g. `anthropic-claude-haiku-4-5.md`. No separate triage.py commands needed."
+  },
+  {
+    day: 3,
+    id: "q25",
+    text: "You run `grep -c \"^## Severity\\|^## Root Cause Hypothesis\\|^## Suggested Actions\"` on a triage output file and get `2`. What does this indicate?",
+    options: [
+      { id: "a", text: "The model produced 2 root cause hypotheses" },
+      { id: "b", text: "One of the three required output sections is missing — the model deviated from the structured format", correct: true },
+      { id: "c", text: "The model correctly identified 2 of the 5 eval cases" },
+      { id: "d", text: "The output was truncated by the max_tokens limit before the third section" },
+    ],
+    multi: false,
+    explanation: "The structured output requires exactly 3 `## ` sections. A count of 2 means one section (Severity, Root Cause, or Suggested Actions) is absent — a production failure regardless of eval pass rate."
+  },
+  {
+    day: 3,
+    id: "q26",
+    text: "What is the most reliable way to confirm that a model actually called `read_log_chunk` during a run?",
+    options: [
+      { id: "a", text: "Check the p50 latency — slower models called more tools" },
+      { id: "b", text: "Add a `call_log: list[str]` to `Tools.dispatch()` and use `Counter(agent.tools.call_log)` after the run", correct: true },
+      { id: "c", text: "Check the output token count — higher output means more tool invocations" },
+      { id: "d", text: "Review the OpenRouter dashboard for total request count" },
+    ],
+    multi: false,
+    explanation: "Instrumenting `dispatch()` to append the tool name to a list gives a direct, per-invocation record. Token count and latency are proxies; `call_log` is the ground truth."
+  },
+  {
+    day: 3,
+    id: "q27",
+    text: "Finding zero HDFS timestamp citations (format `YYMMDD HHMMSS`) in a model's triage output indicates what?",
+    options: [
+      { id: "a", text: "The log file contains no errors during that time window" },
+      { id: "b", text: "The model produced a structurally valid report without needing to quote specific lines" },
+      { id: "c", text: "The model did not read or ground its analysis in actual log content — the report is not evidence-based", correct: true },
+      { id: "d", text: "The grep pattern is incorrect for the HDFS log format" },
+    ],
+    multi: false,
+    explanation: "A real triage report must cite specific log lines as evidence. Zero timestamp citations = the model generated plausible-sounding text without reading the log — generic diagnosis, not forensic analysis."
+  },
+  {
+    day: 3,
+    id: "q28",
+    text: "What is the recommended production routing strategy derived from the Day 3 experiment?",
+    options: [
+      { id: "a", text: "Always use GPT-4o Mini — cheapest option with 100% eval pass rate" },
+      { id: "b", text: "Always use Sonnet — the quality difference justifies the 19× cost premium" },
+      { id: "c", text: "Route all logs through Haiku for initial triage; escalate to Sonnet only when severity is P1 or P2", correct: true },
+      { id: "d", text: "Use GPT-4o Mini for P3/P4 and Haiku for P1/P2" },
+    ],
+    multi: false,
+    explanation: "Haiku is the default — 100% pass rate, genuine tool usage, $0.017/run. Sonnet is reserved for P1/P2 where deeper analysis justifies the cost. GPT-4o Mini is excluded due to shallow analysis."
+  },
+  {
+    day: 3,
+    id: "q29",
+    text: "Using the recommended routing strategy (90% of logs are P3/P4 → Haiku at $0.017; 10% are P1/P2 → Sonnet at $0.333), what is the approximate blended cost per run?",
+    options: [
+      { id: "a", text: "~$0.175" },
+      { id: "b", text: "~$0.049", correct: true },
+      { id: "c", text: "~$0.017" },
+      { id: "d", text: "~$0.333" },
+    ],
+    multi: false,
+    explanation: "0.9 × $0.017 + 0.1 × $0.333 = $0.0153 + $0.0333 = ~$0.049. This is 85% cheaper than running Sonnet on every log while preserving quality for incidents that matter."
+  },
+  {
+    day: 3,
+    id: "q30",
+    text: "Which TWO improvements would make the eval pipeline more resistant to silent quality failures (a model passing the rubric while doing shallow analysis)?",
+    options: [
+      { id: "a", text: "Increase `max_tokens` to 4096 to allow more complete outputs" },
+      { id: "b", text: "Add an `rubric: 'llm-judge'` eval case that explicitly checks for log line citations with timestamps", correct: true },
+      { id: "c", text: "Add a structured-format check: `grep -c '^## '` must return exactly 3 as part of the grading function", correct: true },
+      { id: "d", text: "Run the eval more frequently — higher run count surfaces quality issues over time" },
+    ],
+    multi: true,
+    explanation: "An LLM-judge rubric can verify 'did the model cite a real timestamp' — impossible with `contains`. Adding a section-count check to the grader catches format failures that `contains` misses."
+  },
+];
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let answered = 0;
+let score = 0;
+const dayScores = { 1: { correct: 0, total: 0 }, 2: { correct: 0, total: 0 }, 3: { correct: 0, total: 0 } };
+QUESTIONS.forEach(q => dayScores[q.day].total++);
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  const container = document.getElementById('quiz-container');
+  container.innerHTML = '';
+  let currentDay = null;
+
+  QUESTIONS.forEach((q, idx) => {
+    if (q.day !== currentDay) {
+      currentDay = q.day;
+      const dayLabels = { 1: 'Day 1 — ReAct Agents & Anthropic SDK', 2: 'Day 2 — SRE Log Triage · Three Backends · Evaluator', 3: 'Day 3 — Multi-Model Routing · Token Depth · Cost Optimisation' };
+      const dh = document.createElement('div');
+      dh.className = 'day-header';
+      dh.textContent = dayLabels[currentDay];
+      container.appendChild(dh);
+    }
+
+    const card = document.createElement('div');
+    card.className = 'q-card';
+    card.id = `card-${q.id}`;
+
+    const inputType = q.multi ? 'checkbox' : 'radio';
+    const optionsHtml = q.options.map(o =>
+      `<div class="option" id="opt-${q.id}-${o.id}">
+        <input type="${inputType}" name="${q.id}" id="inp-${q.id}-${o.id}" value="${o.id}">
+        <label for="inp-${q.id}-${o.id}">${o.text}</label>
+      </div>`
+    ).join('');
+
+    card.innerHTML = `
+      <div class="q-number">Q${idx + 1} · Day ${q.day}</div>
+      <div class="q-text">${q.text}</div>
+      ${q.multi ? '<div class="q-multi-note">Select all that apply (2 correct answers)</div>' : ''}
+      <div class="options">${optionsHtml}</div>
+      <div class="q-actions">
+        <button class="btn-check" id="btn-${q.id}" onclick="checkAnswer('${q.id}')">Check Answer</button>
+        <div class="feedback" id="fb-${q.id}" style="display:none"></div>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function checkAnswer(qId) {
+  const q = QUESTIONS.find(x => x.id === qId);
+  const card = document.getElementById(`card-${qId}`);
+  const btn = document.getElementById(`btn-${qId}`);
+  const fb = document.getElementById(`fb-${qId}`);
+
+  if (btn.disabled) return;
+
+  const correctIds = q.options.filter(o => o.correct).map(o => o.id);
+  const selected = q.multi
+    ? [...document.querySelectorAll(`input[name="${qId}"]:checked`)].map(i => i.value)
+    : (document.querySelector(`input[name="${qId}"]:checked`) ? [document.querySelector(`input[name="${qId}"]:checked`).value] : []);
+
+  if (selected.length === 0) {
+    fb.style.display = 'block';
+    fb.className = 'feedback incorrect';
+    fb.textContent = 'Please select an answer first.';
+    return;
+  }
+
+  btn.disabled = true;
+  // Disable all inputs
+  document.querySelectorAll(`input[name="${qId}"]`).forEach(i => i.disabled = true);
+
+  // Mark options
+  q.options.forEach(o => {
+    const optDiv = document.getElementById(`opt-${qId}-${o.id}`);
+    if (o.correct) optDiv.classList.add('correct-opt');
+    if (selected.includes(o.id) && !o.correct) optDiv.classList.add('wrong-opt');
+  });
+
+  const isCorrect = q.multi
+    ? correctIds.length === selected.length && correctIds.every(id => selected.includes(id))
+    : selected[0] === correctIds[0];
+
+  fb.style.display = 'block';
+  if (isCorrect) {
+    card.classList.add('correct');
+    fb.className = 'feedback correct';
+    fb.textContent = '✓ Correct! ' + q.explanation;
+    score++;
+    dayScores[q.day].correct++;
+  } else {
+    card.classList.add('incorrect');
+    fb.className = 'feedback incorrect';
+    fb.textContent = '✗ ' + q.explanation;
+  }
+
+  answered++;
+  updateProgress();
+
+  if (answered === QUESTIONS.length) {
+    setTimeout(showScore, 600);
+  }
+}
+
+function updateProgress() {
+  document.getElementById('progress-text').textContent = `${answered} of ${QUESTIONS.length} answered`;
+  document.getElementById('score-text').textContent = `Score: ${score} / ${QUESTIONS.length}`;
+  document.getElementById('progress-bar').style.width = `${(answered / QUESTIONS.length) * 100}%`;
+}
+
+function showScore() {
+  const panel = document.getElementById('score-panel');
+  panel.classList.add('show');
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const pct = Math.round((score / QUESTIONS.length) * 100);
+  document.getElementById('final-score').textContent = `${score} / ${QUESTIONS.length}`;
+  document.getElementById('final-sub').textContent = `${pct}% — ${getGradeText(pct)}`;
+
+  Object.entries(dayScores).forEach(([day, s]) => {
+    document.getElementById(`day${day}-score`).textContent = `${s.correct} / ${s.total}`;
+  });
+
+  let grade;
+  if (pct >= 90) grade = '🏆 Excellent — ready for Day 4';
+  else if (pct >= 75) grade = '✅ Good — solid grasp of the fundamentals';
+  else if (pct >= 60) grade = '📖 Review flagged areas and retry';
+  else grade = '🔄 Revisit Days 1–3 before proceeding';
+  document.getElementById('grade-label').textContent = grade;
+}
+
+function getGradeText(pct) {
+  if (pct >= 90) return 'Excellent';
+  if (pct >= 75) return 'Good';
+  if (pct >= 60) return 'Passing';
+  return 'Needs review';
+}
+
+function resetQuiz() {
+  answered = 0; score = 0;
+  Object.keys(dayScores).forEach(d => { dayScores[d].correct = 0; });
+  document.getElementById('score-panel').classList.remove('show');
+  updateProgress();
+  render();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+render();
+</script>
+</body>
+</html>

@@ -8,7 +8,7 @@ Thanks for your interest. This is an actively maintained portfolio + research re
 git clone https://github.com/<your-username>/aiops-platform
 cd aiops-platform
 uv venv && source .venv/bin/activate
-uv pip install -r requirements.txt
+uv pip install -r requirements_anthropic.txt  # or requirements_langchain.txt for LangChain backend
 cp .env.example .env  # fill in API keys
 make test
 make eval
@@ -47,14 +47,21 @@ This repo follows the standard agent skeleton (see `_templates/agent-skeleton/` 
 
 ```
 agent/
-├── planner.py     # Decides next step; system prompt and routing logic
-├── tools.py       # Function-callable tools; deterministic side effects
-├── memory.py      # Short-term + long-term memory
-├── evaluator.py   # Validates outputs against ground truth
-└── main.py        # Entry point; wires the four together
+├── triage.py (or main.py)     # Entry point; --backend anthropic|langchain|openrouter
+├── planner_anthropic.py       # Anthropic SDK brain: manual stop_reason loop
+├── tools_anthropic.py         # Tools: Pydantic _registry, Anthropic input_schema format
+├── memory_anthropic.py        # list[dict] message history (Anthropic SDK only)
+├── planner_langchain.py       # LangChain: ChatAnthropic.bind_tools + explicit loop
+├── planner_openrouter.py      # OpenRouter: openai.OpenAI(base_url=openrouter.ai/api/v1)
+├── tools_openrouter.py        # Tools: same _registry, OpenAI function-calling schema
+├── memory_openrouter.py       # Flat messages list with system as first entry
+├── evaluator.py               # Validates outputs against ground truth (backend-agnostic)
+├── requirements_anthropic.txt # anthropic, pydantic
+├── requirements_langchain.txt # langchain, langchain-anthropic, pydantic
+└── requirements_openrouter.txt # openai, pydantic
 ```
 
-If you're adding a new agent, follow this structure. If you're modifying an existing one, don't drift from it — open an issue to discuss before introducing a new pattern.
+Not every agent needs all three backends. Include the ones that add learning value for the day. If you're adding a new agent, follow this structure. If you're modifying an existing one, don't drift from it — open an issue to discuss before introducing a new pattern.
 
 ## Reporting bugs
 
