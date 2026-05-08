@@ -7,6 +7,13 @@ ignore = [
     "E501",  # line too long — handled by formatter
 ]
 
+[lint.per-file-ignores]
+# Existing agent files use `from __future__ import annotations` at the top
+# of each import block intentionally. Suppress isort's blank-line requirement
+# for those files so we don't reformat working production code.
+"agents/**" = ["I001"]
+"scripts/**" = ["I001"]
+
 [format]
 quote-style = "double"
 indent-style = "space"

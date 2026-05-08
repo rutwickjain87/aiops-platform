@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "agents" / "log-intelligence"))
 
-from run_experiment import CaseResult, ModelRow, _model_slug, grade  # noqa: E402
+from run_experiment import CaseResult, ModelRow, _model_slug, grade  # noqa: E402, I001
 
 
 # ── grade() ───────────────────────────────────────────────────────────────────

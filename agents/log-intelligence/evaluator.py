@@ -34,7 +34,7 @@ class Evaluator:
                  sleep_between_cases: float = 2.0):
         self.agent_factory = agent_factory  # callable returning a fresh agent per case
         self.sleep_between_cases = sleep_between_cases
-        self.cases = [json.loads(l) for l in Path(cases_path).read_text().splitlines() if l.strip()]
+        self.cases = [json.loads(line) for line in Path(cases_path).read_text().splitlines() if line.strip()]
 
     def run(self) -> list[CaseResult]:
         results = []

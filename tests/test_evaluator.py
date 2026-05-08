@@ -12,7 +12,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Make the log-intelligence agent importable without installing it
 sys.path.insert(0, str(Path(__file__).parent.parent / "agents" / "log-intelligence"))
 
 from evaluator import CaseResult, Evaluator  # noqa: E402
@@ -117,8 +116,9 @@ class TestGrade:
 class TestReport:
     def test_report_no_crash_on_empty(self, capsys):
         """_report() must not crash on an empty result list."""
-        # Build a minimal Evaluator without a real cases file
-        import tempfile, json
+        import json
+        import tempfile
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
             f.write(json.dumps({"id": "c1", "input": "x", "expected": "y",
                                 "rubric": "contains"}) + "\n")
@@ -129,7 +129,9 @@ class TestReport:
         assert "0/0" in out
 
     def test_report_prints_latency_summary(self, capsys):
-        import tempfile, json
+        import json
+        import tempfile
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
             f.write(json.dumps({"id": "c1", "input": "x", "expected": "y",
                                 "rubric": "contains"}) + "\n")

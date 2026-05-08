@@ -135,7 +135,7 @@ class ModelRow:
 # ── Case loading & grading ────────────────────────────────────────────────────
 
 def load_cases(n: int | None = None) -> list[dict]:
-    cases = [json.loads(l) for l in CASES_PATH.read_text().splitlines() if l.strip()]
+    cases = [json.loads(line) for line in CASES_PATH.read_text().splitlines() if line.strip()]
     return cases[:n] if n else cases
 
 

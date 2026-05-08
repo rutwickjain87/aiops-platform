@@ -15,9 +15,7 @@ USED BY: triage.py --backend anthropic (default)
 SEE ALSO: planner_langchain.py for the LangChain equivalent
 """
 from __future__ import annotations
-import os
 from dataclasses import dataclass
-from typing import Any
 
 from anthropic import Anthropic
 
