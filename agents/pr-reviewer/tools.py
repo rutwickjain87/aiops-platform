@@ -37,7 +37,8 @@ from langchain_core.tools import tool
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 MARKER = "<!-- ai-reviewer:v1 -->"
-MAX_PATCH_CHARS = 8_000  # truncate very large diffs to avoid token waste
+MAX_PATCH_CHARS = 3_000  # truncate per-file diffs to keep total tokens under rate limit
+MAX_FILES = 15  # cap files reviewed to avoid exceeding 50k TPM rate limit
 MAX_SEMGREP_FINDINGS = 30  # cap findings passed to LLM
 
 
@@ -82,7 +83,13 @@ def fetch_pr_diff(repo: str, pr_number: int) -> str:
             "",
         ]
 
-        files = list(pr.get_files())
+        all_files = list(pr.get_files())
+        files = all_files[:MAX_FILES]
+        if len(all_files) > MAX_FILES:
+            lines.append(
+                f"Note: PR has {len(all_files)} changed files; "
+                f"reviewing first {MAX_FILES} to stay within token limits.\n"
+            )
         for f in files:
             lines.append(
                 f"--- FILE: {f.filename} [{f.status}] +{f.additions}/-{f.deletions} ---"
