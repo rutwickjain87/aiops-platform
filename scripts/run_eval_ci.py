@@ -107,11 +107,17 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # Resolve output path to absolute NOW, before os.chdir() changes cwd.
+    # Without this, Path(args.output) resolves relative to AGENT_DIR after chdir,
+    # writing the file to agents/log-intelligence/evals/results/latest.json instead
+    # of the repo-root evals/results/latest.json that the CI workflow reads.
+    import os
+
+    output_path = Path(args.output).resolve()
+
     from evaluator import Evaluator
 
     # Change cwd to agent dir so relative paths (evals/cases.jsonl) work
-    import os
-
     os.chdir(AGENT_DIR)
 
     ev = Evaluator(
@@ -183,7 +189,7 @@ def main() -> int:
         "backend": args.backend,
     }
 
-    output_path = Path(args.output)
+    # output_path was resolved to absolute before os.chdir(); use it directly.
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2))
     print(f"\nResults written to {output_path}")
