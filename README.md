@@ -149,7 +149,7 @@ make dev-up
 make demo-incident SCENARIO=high-error-rate-checkout
 ```
 
-Detailed setup in [`SETUP.md`](SETUP.md).
+Detailed setup in [`docs/SETUP.md`](docs/SETUP.md).
 
 ## Makefile reference
 
@@ -228,7 +228,8 @@ aiops-platform/
 │       ├── sources/         # excalidraw / drawio / mermaid sources
 │       └── exports/         # PNG exports referenced from READMEs
 ├── docs/
-│   ├── SETUP.md
+│   ├── SETUP.md             # full 11-day install & config guide
+│   ├── SCHEDULE.md          # full 11-day build schedule
 │   ├── runbooks/
 │   └── postmortems/
 ├── evals/
@@ -248,7 +249,7 @@ aiops-platform/
 
 ## Status
 
-Active build. Phase 1 (Days 1–11) builds out the platform per [`../SCHEDULE.md`](../SCHEDULE.md). Phase 2 polishes for portfolio + ships the SaaS.
+Active build. Phase 1 (Days 1–11) builds out the platform per [`docs/SCHEDULE.md`](docs/SCHEDULE.md). Phase 2 polishes for portfolio + ships the SaaS.
 
 See [milestones](https://github.com/<your-username>/aiops-platform/milestones) for what's shipping next.
 

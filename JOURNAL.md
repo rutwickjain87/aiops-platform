@@ -375,10 +375,11 @@ The chain span captures total latency and I/O; the nested LLM runs capture per-t
 - `agents/slack-incident-bot/planner.py` ✅ `@ls_traceable` + `init_tracing_client` wired in
 - `agents/slack-incident-bot/requirements.txt` ✅ `langsmith>=0.1.77` added
 - `agents/slack-incident-bot/.env.example` ✅ updated to `LANGSMITH_*` variable names
-- `Makefile` ✅ multi-venv targets: `setup-bot`, `test-bot`, `setup-log`, `test-log`
-- `SETUP.md` / `SCHEDULE.md` ✅ restored to `aiops-platform/` root (originals from Day 1)
-- `docs/setup.md` ✅ Day 5 Slack + LangSmith setup guide
-- `docs/schedule.md` ✅ daily ops runbook with morning health checks
+- `Makefile` ✅ multi-venv targets: `setup-bot`, `test-bot`, `setup-log`, `test-log`; `.DEFAULT_GOAL := help`
+- `docs/SETUP.md` ✅ full 11-day install guide — moved from root to `docs/`
+- `docs/SCHEDULE.md` ✅ full 11-day build schedule — moved from root to `docs/`
+- `README.md` ✅ Makefile reference section + updated quick-start + links point to `docs/`
+- `CONTRIBUTING.md` ✅ `make setup` / `make lint` / `make fmt` in contributor workflow
 
 **Pending (run locally):**
 ```bash
@@ -393,12 +394,13 @@ cd agents/slack-incident-bot
 python app.py --trigger ALERT-001
 
 # 4. Commit all Day 5 work
+git mv SETUP.md docs/SETUP.md               # move to docs/ (canonical location)
+git mv SCHEDULE.md docs/SCHEDULE.md
 git add agents/slack-incident-bot/tracing.py \
         agents/slack-incident-bot/planner.py \
         agents/slack-incident-bot/requirements.txt \
         agents/slack-incident-bot/.env.example \
-        docs/setup.md docs/schedule.md \
-        SETUP.md SCHEDULE.md Makefile \
+        docs/SETUP.md docs/SCHEDULE.md Makefile \
         README.md CONTRIBUTING.md JOURNAL.md
 git commit -m "feat(day5): Slack incident bot + LangSmith tracing + Makefile multi-venv"
 git push
