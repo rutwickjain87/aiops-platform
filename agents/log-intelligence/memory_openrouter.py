@@ -16,6 +16,7 @@ OpenAI tool round format:
 USED BY: planner_openrouter.py
 SEE ALSO: memory_anthropic.py — same concept, different message shapes
 """
+
 from __future__ import annotations
 from typing import Any
 
@@ -44,28 +45,32 @@ class Memory:
         returned by tools_openrouter.Tools.dispatch().
         """
         # Assistant turn — carry over tool_calls exactly as the API returned them
-        self._messages.append({
-            "role": "assistant",
-            "content": assistant_msg.content,  # often None when tool_calls present
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,  # raw JSON string
-                    },
-                }
-                for tc in (assistant_msg.tool_calls or [])
-            ],
-        })
+        self._messages.append(
+            {
+                "role": "assistant",
+                "content": assistant_msg.content,  # often None when tool_calls present
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,  # raw JSON string
+                        },
+                    }
+                    for tc in (assistant_msg.tool_calls or [])
+                ],
+            }
+        )
         # One tool message per result
         for r in tool_results:
-            self._messages.append({
-                "role": "tool",
-                "tool_call_id": r["tool_call_id"],
-                "content": r["content"],
-            })
+            self._messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": r["tool_call_id"],
+                    "content": r["content"],
+                }
+            )
 
     def as_messages(self) -> list[dict]:
         return list(self._messages)

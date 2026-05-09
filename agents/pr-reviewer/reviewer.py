@@ -31,12 +31,43 @@ In CI the workflow injects these via secrets:
 The workflow calls:
   python reviewer.py --repo $REPO --pr $PR_NUMBER --post-comment
 """
+
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
+from anthropic import RateLimitError
+
 from planner import PRReviewerPlanner, ReviewerConfig
+
+
+def _post_rate_limit_comment(repo: str, pr_number: int) -> None:
+    """Post a best-effort fallback comment when the Anthropic rate limit is hit."""
+    try:
+        from github import Github  # type: ignore[import]
+        from tools import MARKER
+
+        token = os.environ.get("GITHUB_TOKEN")
+        if not token:
+            return
+        gh = Github(token)
+        issue = gh.get_repo(repo).get_issue(pr_number)
+        body = (
+            f"{MARKER}\n\n## 🔒 AI Security Review\n\n"
+            "⚠️ Review skipped this run: Anthropic API rate limit exceeded "
+            "(50k input tokens/minute). The review will retry automatically on "
+            "the next push to this PR.\n\n"
+            "*Please perform a manual security review before merging if this PR is urgent.*"
+        )
+        existing = next((c for c in issue.get_comments() if MARKER in c.body), None)
+        if existing:
+            existing.edit(body)
+        else:
+            issue.create_comment(body)
+    except Exception:
+        pass  # Best-effort only; don't let comment failure mask the real issue
 
 
 def parse_args() -> argparse.Namespace:
@@ -100,6 +131,15 @@ def main() -> None:
             pr_number=args.pr,
             post_comment=args.post_comment,
         )
+    except RateLimitError as e:
+        print(f"\n[WARN] Anthropic rate limit hit: {e}", file=sys.stderr)
+        print(
+            "[WARN] Posting fallback comment and exiting 0 — CI is not blocked.",
+            file=sys.stderr,
+        )
+        if args.post_comment:
+            _post_rate_limit_comment(args.repo, args.pr)
+        sys.exit(0)
     except RuntimeError as e:
         print(f"\n[ERROR] {e}", file=sys.stderr)
         sys.exit(1)

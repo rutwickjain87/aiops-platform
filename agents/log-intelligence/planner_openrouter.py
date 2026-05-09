@@ -36,6 +36,7 @@ COMPARISON vs planner_anthropic.py:
   {"type":"tool_result", ...}       {"role":"tool", "tool_call_id":..., ...}
   memory_anthropic.py               memory_openrouter.py
 """
+
 from __future__ import annotations
 import os
 from dataclasses import dataclass
@@ -87,11 +88,16 @@ class OpenRouterPlannerConfig:
     # Browse models + prices: https://openrouter.ai/models
     model: str = "anthropic/claude-haiku-4-5"
     max_steps: int = 15
-    max_tokens: int = 1024   # keep low — triage reports fit easily in 1024 tokens
+    max_tokens: int = 1024  # keep low — triage reports fit easily in 1024 tokens
 
 
 class OpenRouterPlanner:
-    def __init__(self, tools: Tools, memory: Memory, config: OpenRouterPlannerConfig | None = None):
+    def __init__(
+        self,
+        tools: Tools,
+        memory: Memory,
+        config: OpenRouterPlannerConfig | None = None,
+    ):
         if not os.environ.get("OPENROUTER_API_KEY"):
             raise EnvironmentError(
                 "OPENROUTER_API_KEY not set. "

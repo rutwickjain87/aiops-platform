@@ -39,6 +39,7 @@ REQUIREMENTS
 ──────────────────────────────────
   pip install -r requirements.txt
 """
+
 from __future__ import annotations
 
 import json
@@ -132,6 +133,7 @@ RULES
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class ReviewerConfig:
     model: str = "claude-haiku-4-5-20251001"
@@ -140,6 +142,7 @@ class ReviewerConfig:
 
 
 # ── Planner ─────────────────────────────────────────────────────────────────────
+
 
 class PRReviewerPlanner:
     """

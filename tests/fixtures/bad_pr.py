@@ -12,13 +12,14 @@ It intentionally contains:
 
 The PR security reviewer agent should detect all five classes.
 """
+
 import os
 import sqlite3
 import subprocess
 
 # ── CWE-798: Hardcoded Credential ─────────────────────────────────────────────
 # Never hardcode secrets. Use environment variables or a secret manager.
-AWS_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"          # noqa: S105
+AWS_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"  # noqa: S105
 AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"  # noqa: S105
 DATABASE_PASSWORD = "super_secret_db_password_123"  # noqa: S105
 
@@ -49,6 +50,7 @@ def calculate(expression: str) -> object:
 def safe_calculate(expression: str) -> float:
     """Fixed version using ast.literal_eval (safe for literals) or a maths parser."""
     import ast
+
     # For real calculators, use a dedicated safe expression evaluator.
     return float(ast.literal_eval(expression))
 
@@ -59,7 +61,7 @@ def ping_host(hostname: str) -> str:
     # WRONG: attacker can pass hostname = "localhost; rm -rf /"
     result = subprocess.run(
         f"ping -c 1 {hostname}",
-        shell=True,          # noqa: S602
+        shell=True,  # noqa: S602
         capture_output=True,
         text=True,
     )

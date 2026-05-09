@@ -7,6 +7,7 @@ Tests cover:
   - _model_slug() helper
   - CaseResult.cost_usd() calculation
 """
+
 from __future__ import annotations
 
 import sys
@@ -19,9 +20,12 @@ from run_experiment import CaseResult, ModelRow, _model_slug, grade  # noqa: E40
 
 # ── grade() ───────────────────────────────────────────────────────────────────
 
+
 class TestGrade:
     def test_contains_hit(self):
-        ok, notes = grade({"expected": "P2", "rubric": "contains"}, "Severity: P2 outage")
+        ok, notes = grade(
+            {"expected": "P2", "rubric": "contains"}, "Severity: P2 outage"
+        )
         assert ok is True
         assert notes == ""
 
@@ -46,34 +50,46 @@ class TestGrade:
 
 # ── CaseResult.cost_usd() ─────────────────────────────────────────────────────
 
+
 class TestCaseResultCost:
     def test_cost_calculation(self):
         r = CaseResult(
-            case_id="c1", passed=True, notes="",
-            latency_ms=5000, input_tokens=100_000, output_tokens=2_000,
+            case_id="c1",
+            passed=True,
+            notes="",
+            latency_ms=5000,
+            input_tokens=100_000,
+            output_tokens=2_000,
         )
         # Sonnet pricing: $3/1M input, $15/1M output
         cost = r.cost_usd(in_usd_1m=3.00, out_usd_1m=15.00)
-        assert abs(cost - (100_000 / 1_000_000 * 3.00 + 2_000 / 1_000_000 * 15.00)) < 1e-9
+        assert (
+            abs(cost - (100_000 / 1_000_000 * 3.00 + 2_000 / 1_000_000 * 15.00)) < 1e-9
+        )
 
     def test_zero_tokens_zero_cost(self):
         r = CaseResult(
-            case_id="c1", passed=False, notes="error",
-            latency_ms=100, input_tokens=0, output_tokens=0,
+            case_id="c1",
+            passed=False,
+            notes="error",
+            latency_ms=100,
+            input_tokens=0,
+            output_tokens=0,
         )
         assert r.cost_usd(3.00, 15.00) == 0.0
 
 
 # ── ModelRow computed properties ──────────────────────────────────────────────
 
+
 class TestModelRow:
     def _make_row(self):
         results = [
-            CaseResult("c1", True,  "", 10000, 80000, 1500),
-            CaseResult("c2", True,  "", 20000, 90000, 1800),
+            CaseResult("c1", True, "", 10000, 80000, 1500),
+            CaseResult("c2", True, "", 20000, 90000, 1800),
             CaseResult("c3", False, "miss", 15000, 70000, 1200),
-            CaseResult("c4", True,  "", 12000, 85000, 1600),
-            CaseResult("c5", True,  "", 18000, 95000, 2000),
+            CaseResult("c4", True, "", 12000, 85000, 1600),
+            CaseResult("c5", True, "", 18000, 95000, 2000),
         ]
         return ModelRow(
             model_id="anthropic/claude-haiku-4-5",
@@ -111,6 +127,7 @@ class TestModelRow:
 
 
 # ── _model_slug() ─────────────────────────────────────────────────────────────
+
 
 class TestModelSlug:
     def test_slash_replaced(self):

@@ -21,6 +21,7 @@ Add a new tool:
 USED BY: planner_anthropic.py
 SEE ALSO: planner_langchain.py — same tool logic but wrapped with @tool decorator
 """
+
 from __future__ import annotations
 import subprocess
 from pathlib import Path
@@ -31,8 +32,11 @@ from pydantic import BaseModel, Field
 
 # ── Tool: grep ─────────────────────────────────────────────────────────────
 
+
 class GrepIn(BaseModel):
-    pattern: str = Field(..., description="Regex pattern (ripgrep syntax) to search for")
+    pattern: str = Field(
+        ..., description="Regex pattern (ripgrep syntax) to search for"
+    )
     path: str = Field(..., description="Absolute path to the file to search")
 
 
@@ -40,22 +44,29 @@ def grep(args: GrepIn) -> str:
     """Search a file with ripgrep. Returns matching lines with line numbers."""
     out = subprocess.run(
         ["rg", "--no-heading", "-n", args.pattern, args.path],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     result = out.stdout.strip()
     if not result:
         return f"(no matches for pattern '{args.pattern}' in {args.path})"
     lines = result.splitlines()
     if len(lines) > 200:
-        return "\n".join(lines[:200]) + f"\n... ({len(lines) - 200} more lines truncated)"
+        return (
+            "\n".join(lines[:200]) + f"\n... ({len(lines) - 200} more lines truncated)"
+        )
     return result
 
 
 # ── Tool: read_log_chunk ────────────────────────────────────────────────────
 
+
 class ReadLogChunkIn(BaseModel):
     path: str = Field(..., description="Absolute path to the log file")
-    start_line: int = Field(1, description="Line number to start reading from (1-indexed)")
+    start_line: int = Field(
+        1, description="Line number to start reading from (1-indexed)"
+    )
     num_lines: int = Field(100, description="Number of lines to read (max 500)")
 
 
@@ -73,6 +84,7 @@ def read_log_chunk(args: ReadLogChunkIn) -> str:
 
 
 # ── Tool: cluster_errors ───────────────────────────────────────────────────
+
 
 class ClusterErrorsIn(BaseModel):
     path: str = Field(..., description="Absolute path to the log file")
@@ -111,7 +123,9 @@ def cluster_errors(args: ClusterErrorsIn) -> str:
     if not buckets and not unparsed_errors:
         return f"No WARN/ERROR/FATAL lines found in {args.path}"
 
-    parts: list[str] = [f"Clustered anomaly lines from {p.name} (window={bucket_minutes}min)\n"]
+    parts: list[str] = [
+        f"Clustered anomaly lines from {p.name} (window={bucket_minutes}min)\n"
+    ]
     for key in sorted(buckets):
         entries = buckets[key]
         parts.append(f"\n[{key}] — {len(entries)} event(s)")
@@ -132,7 +146,12 @@ def _parse_timestamp(line: str) -> datetime | None:
     if len(parts) < 2:
         return None
     # HDFS format: 081109 214043
-    if len(parts[0]) == 6 and parts[0].isdigit() and len(parts[1]) == 6 and parts[1].isdigit():
+    if (
+        len(parts[0]) == 6
+        and parts[0].isdigit()
+        and len(parts[1]) == 6
+        and parts[1].isdigit()
+    ):
         try:
             return datetime.strptime(parts[0] + parts[1], "%y%m%d%H%M%S")
         except ValueError:
@@ -149,6 +168,7 @@ def _parse_timestamp(line: str) -> datetime | None:
 
 # ── Registry / dispatch ─────────────────────────────────────────────────────
 
+
 class Tools:
     """
     Dispatcher. Maps Anthropic tool_use blocks → real Python functions.
@@ -157,6 +177,7 @@ class Tools:
     input schemas, and descriptions. The planner never sees the functions —
     only the schema (name + description + JSON schema for inputs).
     """
+
     _registry: dict[str, tuple] = {
         "grep": (
             GrepIn,
@@ -193,11 +214,13 @@ class Tools:
             if block.type != "tool_use":
                 continue
             if block.name not in self._registry:
-                results.append({
-                    "tool_use_id": block.id,
-                    "content": f"ERROR: unknown tool '{block.name}'",
-                    "is_error": True,
-                })
+                results.append(
+                    {
+                        "tool_use_id": block.id,
+                        "content": f"ERROR: unknown tool '{block.name}'",
+                        "is_error": True,
+                    }
+                )
                 continue
             model, fn, _desc = self._registry[block.name]
             try:
@@ -205,9 +228,11 @@ class Tools:
                 output = fn(validated)
                 results.append({"tool_use_id": block.id, "content": str(output)})
             except Exception as e:
-                results.append({
-                    "tool_use_id": block.id,
-                    "content": f"ERROR: {e}",
-                    "is_error": True,
-                })
+                results.append(
+                    {
+                        "tool_use_id": block.id,
+                        "content": f"ERROR: {e}",
+                        "is_error": True,
+                    }
+                )
         return results

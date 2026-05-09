@@ -14,6 +14,7 @@ cluster_errors). The difference is in the schema() and dispatch() methods:
 USED BY: planner_openrouter.py
 SEE ALSO: tools_anthropic.py for the Anthropic-format equivalent
 """
+
 from __future__ import annotations
 import json
 import subprocess
@@ -25,28 +26,37 @@ from pydantic import BaseModel, Field
 
 # ── Tool functions (identical logic to tools_anthropic.py) ─────────────────
 
+
 class GrepIn(BaseModel):
-    pattern: str = Field(..., description="Regex pattern (ripgrep syntax) to search for")
+    pattern: str = Field(
+        ..., description="Regex pattern (ripgrep syntax) to search for"
+    )
     path: str = Field(..., description="Absolute path to the file to search")
 
 
 def grep(args: GrepIn) -> str:
     out = subprocess.run(
         ["rg", "--no-heading", "-n", args.pattern, args.path],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     result = out.stdout.strip()
     if not result:
         return f"(no matches for pattern '{args.pattern}' in {args.path})"
     lines = result.splitlines()
     if len(lines) > 200:
-        return "\n".join(lines[:200]) + f"\n... ({len(lines) - 200} more lines truncated)"
+        return (
+            "\n".join(lines[:200]) + f"\n... ({len(lines) - 200} more lines truncated)"
+        )
     return result
 
 
 class ReadLogChunkIn(BaseModel):
     path: str = Field(..., description="Absolute path to the log file")
-    start_line: int = Field(1, description="Line number to start reading from (1-indexed)")
+    start_line: int = Field(
+        1, description="Line number to start reading from (1-indexed)"
+    )
     num_lines: int = Field(100, description="Number of lines to read (max 500)")
 
 
@@ -107,7 +117,12 @@ def _parse_timestamp(line: str) -> datetime | None:
     parts = line.split()
     if len(parts) < 2:
         return None
-    if len(parts[0]) == 6 and parts[0].isdigit() and len(parts[1]) == 6 and parts[1].isdigit():
+    if (
+        len(parts[0]) == 6
+        and parts[0].isdigit()
+        and len(parts[1]) == 6
+        and parts[1].isdigit()
+    ):
         try:
             return datetime.strptime(parts[0] + parts[1], "%y%m%d%H%M%S")
         except ValueError:
@@ -123,6 +138,7 @@ def _parse_timestamp(line: str) -> datetime | None:
 
 # ── Registry / dispatch — OpenAI function-calling format ───────────────────
 
+
 class Tools:
     """
     Same _registry pattern as tools_anthropic.py, but schema() returns
@@ -136,17 +152,21 @@ class Tools:
 
     The JSON Schema body is identical — only the wrapper differs.
     """
+
     _registry: dict[str, tuple] = {
         "grep": (
-            GrepIn, grep,
+            GrepIn,
+            grep,
             "Search a log file for lines matching a regex pattern. Returns matching lines with line numbers.",
         ),
         "read_log_chunk": (
-            ReadLogChunkIn, read_log_chunk,
+            ReadLogChunkIn,
+            read_log_chunk,
             "Read a contiguous block of lines from a log file. Use this for initial inspection or to examine a specific section.",
         ),
         "cluster_errors": (
-            ClusterErrorsIn, cluster_errors,
+            ClusterErrorsIn,
+            cluster_errors,
             "Group WARN/ERROR/FATAL lines into time buckets to spot bursts or cascading failures.",
         ),
     }
@@ -173,13 +193,15 @@ class Tools:
         Returns a list of {"tool_call_id": ..., "content": ...} dicts.
         """
         results = []
-        for tc in (tool_calls or []):
+        for tc in tool_calls or []:
             name = tc.function.name
             if name not in self._registry:
-                results.append({
-                    "tool_call_id": tc.id,
-                    "content": f"ERROR: unknown tool '{name}'",
-                })
+                results.append(
+                    {
+                        "tool_call_id": tc.id,
+                        "content": f"ERROR: unknown tool '{name}'",
+                    }
+                )
                 continue
             model_cls, fn, _ = self._registry[name]
             try:

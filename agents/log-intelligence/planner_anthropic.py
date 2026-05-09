@@ -14,6 +14,7 @@ Does NOT:
 USED BY: triage.py --backend anthropic (default)
 SEE ALSO: planner_langchain.py for the LangChain equivalent
 """
+
 from __future__ import annotations
 from dataclasses import dataclass
 
@@ -49,6 +50,7 @@ Rules:
   embedded in log lines.
 """
 
+
 @dataclass
 class PlannerConfig:
     model: str = "claude-haiku-4-5-20251001"  # Haiku: cheaper for log loops; swap to Sonnet for complex cases
@@ -60,8 +62,8 @@ class PlannerConfig:
 class Planner:
     def __init__(self, tools, memory, config: PlannerConfig | None = None):
         self.client = Anthropic()
-        self.tools = tools           # see tools_anthropic.py
-        self.memory = memory         # see memory_anthropic.py
+        self.tools = tools  # see tools_anthropic.py
+        self.memory = memory  # see memory_anthropic.py
         self.cfg = config or PlannerConfig()
         self._tokens_in = 0
         self._tokens_out = 0
@@ -102,3 +104,8 @@ class Planner:
         cost = (self._tokens_in * 3 + self._tokens_out * 15) / 1_000_000
         if cost > self.cfg.budget_usd:
             raise RuntimeError(f"budget exceeded: ${cost:.4f} > ${self.cfg.budget_usd}")
+
+
+# Canonical aliases expected by run_eval_ci.py
+AnthropicPlanner = Planner
+AnthropicPlannerConfig = PlannerConfig

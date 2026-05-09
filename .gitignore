@@ -38,6 +38,8 @@ out/
 .turbo/
 .npm/
 *.log
+# loghub eval fixtures must be tracked — explicitly un-ignore them
+!services/ingestion/loghub-samples/**
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

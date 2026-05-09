@@ -15,6 +15,7 @@ planner adds tool results to memory after a tool round completes.
 USED BY: planner_anthropic.py
 SEE ALSO: planner_langchain.py uses LangChain's ChatMessageHistory instead
 """
+
 from __future__ import annotations
 from typing import Any
 
@@ -33,12 +34,12 @@ class Memory:
     def add_tool_round(self, assistant_blocks, tool_results: list[dict]) -> None:
         # Anthropic-format: assistant turn (with tool_use blocks) then user turn (tool_result blocks)
         self._messages.append({"role": "assistant", "content": assistant_blocks})
-        self._messages.append({
-            "role": "user",
-            "content": [
-                {"type": "tool_result", **r} for r in tool_results
-            ],
-        })
+        self._messages.append(
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", **r} for r in tool_results],
+            }
+        )
 
     def as_messages(self) -> list[dict]:
         return list(self._messages)

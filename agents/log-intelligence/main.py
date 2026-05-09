@@ -5,6 +5,7 @@ Wires planner + tools + memory together. Single CLI entry point. Keep this
 small; if it grows beyond ~80 lines you're putting business logic in the
 wrong place.
 """
+
 from __future__ import annotations
 import argparse
 import sys
@@ -31,6 +32,7 @@ def main() -> int:
 
     if args.eval:
         from evaluator import Evaluator
+
         results = Evaluator(make_agent).run()
         return 0 if all(r.passed for r in results) else 1
 

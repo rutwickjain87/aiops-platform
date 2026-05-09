@@ -12,6 +12,7 @@ Run with:
 
 NOTE: semgrep tests are skipped automatically if semgrep is not installed.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,8 +30,10 @@ from tools import MARKER, fetch_pr_diff, post_review_comment, run_semgrep  # noq
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+
 def _semgrep_available() -> bool:
     import subprocess
+
     r = subprocess.run(["which", "semgrep"], capture_output=True)
     return r.returncode == 0
 
@@ -42,12 +45,18 @@ FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures"
 # fetch_pr_diff tests
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestFetchPrDiff:
     """Tests for fetch_pr_diff tool — GitHub API calls are mocked."""
 
-    def _make_mock_file(self, filename: str, status: str = "modified",
-                         additions: int = 5, deletions: int = 2,
-                         patch: str = "+new line\n-old line") -> MagicMock:
+    def _make_mock_file(
+        self,
+        filename: str,
+        status: str = "modified",
+        additions: int = 5,
+        deletions: int = 2,
+        patch: str = "+new line\n-old line",
+    ) -> MagicMock:
         f = MagicMock()
         f.filename = filename
         f.status = status
@@ -69,9 +78,7 @@ class TestFetchPrDiff:
         mock_pr.changed_files = 1
         mock_pr.additions = 10
         mock_pr.deletions = 2
-        mock_pr.get_files.return_value = [
-            self._make_mock_file("auth.py")
-        ]
+        mock_pr.get_files.return_value = [self._make_mock_file("auth.py")]
 
         mock_repo = MagicMock()
         mock_repo.get_pull.return_value = mock_pr
@@ -163,6 +170,7 @@ class TestFetchPrDiff:
 # run_semgrep tests
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestRunSemgrep:
     """Tests for run_semgrep tool — exercises real semgrep when available."""
 
@@ -188,10 +196,7 @@ class TestRunSemgrep:
     @pytest.mark.skipif(not _semgrep_available(), reason="semgrep not installed")
     def test_clean_code_returns_empty_findings(self):
         """Clean code should return zero findings (or very few false positives)."""
-        code = (
-            "def add(a: int, b: int) -> int:\n"
-            "    return a + b\n"
-        )
+        code = "def add(a: int, b: int) -> int:\n    return a + b\n"
         result = run_semgrep.invoke({"code": code, "filename": "math_utils.py"})
         data = json.loads(result)
         assert "findings" in data
@@ -237,6 +242,7 @@ class TestRunSemgrep:
 # post_review_comment tests
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestPostReviewComment:
     """Tests for post_review_comment — GitHub API calls are mocked."""
 
@@ -256,11 +262,13 @@ class TestPostReviewComment:
 
         with patch("github.Github") as MockGithub:
             MockGithub.return_value.get_repo.return_value = mock_repo
-            result = post_review_comment.invoke({
-                "repo": "owner/repo",
-                "pr_number": 7,
-                "body": "## Security Review\nAll clear.",
-            })
+            result = post_review_comment.invoke(
+                {
+                    "repo": "owner/repo",
+                    "pr_number": 7,
+                    "body": "## Security Review\nAll clear.",
+                }
+            )
 
         mock_issue.create_comment.assert_called_once()
         assert "Posted new review comment" in result
@@ -282,11 +290,13 @@ class TestPostReviewComment:
 
         with patch("github.Github") as MockGithub:
             MockGithub.return_value.get_repo.return_value = mock_repo
-            result = post_review_comment.invoke({
-                "repo": "owner/repo",
-                "pr_number": 7,
-                "body": "## Security Review\n1 finding.",
-            })
+            result = post_review_comment.invoke(
+                {
+                    "repo": "owner/repo",
+                    "pr_number": 7,
+                    "body": "## Security Review\n1 finding.",
+                }
+            )
 
         existing_comment.edit.assert_called_once()
         mock_issue.create_comment.assert_not_called()
@@ -306,11 +316,13 @@ class TestPostReviewComment:
 
         with patch("github.Github") as MockGithub:
             MockGithub.return_value.get_repo.return_value = mock_repo
-            post_review_comment.invoke({
-                "repo": "owner/repo",
-                "pr_number": 1,
-                "body": "My review",
-            })
+            post_review_comment.invoke(
+                {
+                    "repo": "owner/repo",
+                    "pr_number": 1,
+                    "body": "My review",
+                }
+            )
 
         call_args = mock_issue.create_comment.call_args[0][0]
         assert MARKER in call_args
@@ -318,11 +330,13 @@ class TestPostReviewComment:
     def test_missing_github_token_returns_error(self, monkeypatch):
         """Should return a clear error when GITHUB_TOKEN is not set."""
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-        result = post_review_comment.invoke({
-            "repo": "owner/repo",
-            "pr_number": 1,
-            "body": "test",
-        })
+        result = post_review_comment.invoke(
+            {
+                "repo": "owner/repo",
+                "pr_number": 1,
+                "body": "test",
+            }
+        )
         assert "GITHUB_TOKEN" in result
         assert "ERROR" in result
 
@@ -332,11 +346,13 @@ class TestPostReviewComment:
 
         with patch("github.Github") as MockGithub:
             MockGithub.return_value.get_repo.side_effect = Exception("403 Forbidden")
-            result = post_review_comment.invoke({
-                "repo": "owner/repo",
-                "pr_number": 1,
-                "body": "test",
-            })
+            result = post_review_comment.invoke(
+                {
+                    "repo": "owner/repo",
+                    "pr_number": 1,
+                    "body": "test",
+                }
+            )
 
         assert "ERROR" in result
         assert "403 Forbidden" in result

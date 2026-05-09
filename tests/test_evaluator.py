@@ -7,6 +7,7 @@ Tests cover:
   - Evaluator._report() latency summary computation
   - Edge cases: empty output, unknown rubric, case-insensitive miss
 """
+
 from __future__ import annotations
 
 import sys
@@ -18,6 +19,7 @@ from evaluator import CaseResult, Evaluator  # noqa: E402, I001
 
 
 # ── CaseResult ─────────────────────────────────────────────────────────────────
+
 
 class TestCaseResult:
     def test_fields_stored(self):
@@ -48,25 +50,35 @@ class TestCaseResult:
 
 # ── Evaluator._grade() ─────────────────────────────────────────────────────────
 
+
 class TestGrade:
     """Test _grade() directly by instantiating an Evaluator with a stub factory."""
 
     def _make_evaluator(self, tmp_path):
         """Return an Evaluator wired to a dummy cases file."""
         cases_file = tmp_path / "cases.jsonl"
-        cases_file.write_text('{"id":"c1","input":"x","expected":"P2","rubric":"contains"}\n')
+        cases_file.write_text(
+            '{"id":"c1","input":"x","expected":"P2","rubric":"contains"}\n'
+        )
         # Agent factory is never called in these tests — we call _grade() directly
-        return Evaluator(agent_factory=lambda: None, cases_path=str(cases_file),
-                         sleep_between_cases=0)
+        return Evaluator(
+            agent_factory=lambda: None,
+            cases_path=str(cases_file),
+            sleep_between_cases=0,
+        )
 
     def test_contains_pass(self, tmp_path):
         ev = self._make_evaluator(tmp_path)
-        ok, notes = ev._grade({"expected": "P2", "rubric": "contains"}, "## Severity\nP2 — …")
+        ok, notes = ev._grade(
+            {"expected": "P2", "rubric": "contains"}, "## Severity\nP2 — …"
+        )
         assert ok is True
 
     def test_contains_fail(self, tmp_path):
         ev = self._make_evaluator(tmp_path)
-        ok, notes = ev._grade({"expected": "P2", "rubric": "contains"}, "## Severity\nP3 — …")
+        ok, notes = ev._grade(
+            {"expected": "P2", "rubric": "contains"}, "## Severity\nP3 — …"
+        )
         assert ok is False
         assert "P2" in notes
 
@@ -113,6 +125,7 @@ class TestGrade:
 
 # ── Evaluator._report() latency stats ─────────────────────────────────────────
 
+
 class TestReport:
     def test_report_no_crash_on_empty(self, capsys):
         """_report() must not crash on an empty result list."""
@@ -120,11 +133,17 @@ class TestReport:
         import tempfile
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            f.write(json.dumps({"id": "c1", "input": "x", "expected": "y",
-                                "rubric": "contains"}) + "\n")
+            f.write(
+                json.dumps(
+                    {"id": "c1", "input": "x", "expected": "y", "rubric": "contains"}
+                )
+                + "\n"
+            )
             path = f.name
-        ev = Evaluator(agent_factory=lambda: None, cases_path=path, sleep_between_cases=0)
-        ev._report([])   # should not raise
+        ev = Evaluator(
+            agent_factory=lambda: None, cases_path=path, sleep_between_cases=0
+        )
+        ev._report([])  # should not raise
         out = capsys.readouterr().out
         assert "0/0" in out
 
@@ -133,10 +152,16 @@ class TestReport:
         import tempfile
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            f.write(json.dumps({"id": "c1", "input": "x", "expected": "y",
-                                "rubric": "contains"}) + "\n")
+            f.write(
+                json.dumps(
+                    {"id": "c1", "input": "x", "expected": "y", "rubric": "contains"}
+                )
+                + "\n"
+            )
             path = f.name
-        ev = Evaluator(agent_factory=lambda: None, cases_path=path, sleep_between_cases=0)
+        ev = Evaluator(
+            agent_factory=lambda: None, cases_path=path, sleep_between_cases=0
+        )
         results = [
             CaseResult("c1", True, "", latency_ms=100, cost_usd=0.0),
             CaseResult("c2", True, "", latency_ms=200, cost_usd=0.0),
