@@ -50,14 +50,20 @@ jobs:
       - name: Install dependencies
         run: |
           # Root venv — linting + script runner tools
-          uv venv
-          source .venv/bin/activate
-          uv pip install -r requirements.txt
-          # Agent venv — Anthropic SDK needed by the planner
-          cd agents/log-intelligence
-          uv venv
-          source .venv/bin/activate
-          uv pip install -r requirements_anthropic.txt
+          uv venv .venv
+          uv pip install --python .venv/bin/python -r requirements.txt
+
+          # Agent venv — use explicit --python to avoid activation/cd confusion.
+          # Relative `source .venv/bin/activate` after `cd` can silently target
+          # the wrong interpreter; explicit paths are unambiguous.
+          uv venv agents/log-intelligence/.venv
+          uv pip install \
+            --python agents/log-intelligence/.venv/bin/python \
+            -r agents/log-intelligence/requirements_anthropic.txt
+
+          # Fail fast if anthropic didn't install correctly
+          agents/log-intelligence/.venv/bin/python \
+            -c "import anthropic; print('anthropic OK:', anthropic.__version__)"
 
       - name: Pre-flight diagnostics
         run: |
