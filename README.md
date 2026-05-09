@@ -132,20 +132,44 @@ These are non-negotiable across every agent in this repo:
 git clone https://github.com/<your-username>/aiops-platform
 cd aiops-platform
 
-# 2. Setup
-cp .env.example .env  # fill in API keys
-uv venv && source .venv/bin/activate
-uv pip install -r requirements.txt
+# 2. Copy and fill in API keys
+cp .env.example .env
 
-# 3. Run the eval suite (no infra required; uses fixtures)
+# 3. Bootstrap all agent venvs (run once after clone)
+make setup
+
+# 4. Run the full test suite
+make test
+
+# 5. Run the eval suite (no infra required; uses fixtures)
 make eval
 
-# 4. Run a flagship demo locally (requires kind + docker)
+# 6. Run a flagship demo locally (requires kind + docker)
 make dev-up
 make demo-incident SCENARIO=high-error-rate-checkout
 ```
 
-Detailed setup in [`docs/SETUP.md`](docs/SETUP.md).
+Detailed setup in [`SETUP.md`](SETUP.md).
+
+## Makefile reference
+
+All common dev tasks are wired into the top-level `Makefile`. Run `make` (or `make help`) to see all targets.
+
+| Command | What it does |
+|---|---|
+| `make setup` | Bootstrap all agent venvs (run once after clone) |
+| `make setup-log` | Bootstrap `log-intelligence` venv only |
+| `make setup-bot` | Bootstrap `slack-incident-bot` venv only |
+| `make test` | Run ALL unit tests across all agents |
+| `make test-log` | Run `log-intelligence` tests only |
+| `make test-bot` | Run `slack-incident-bot` tests only (24 tests) |
+| `make eval` | Run agent eval suite (Anthropic backend, 80% threshold) |
+| `make eval BACKEND=langchain` | Run eval with LangChain backend |
+| `make eval THRESHOLD=1.0` | Run eval requiring 100% pass rate |
+| `make lint` | Ruff lint + format check |
+| `make fmt` | Auto-fix lint + format |
+
+Each agent has its own isolated venv managed by [`uv`](https://github.com/astral-sh/uv). Guard checks in each `test-*` target print a helpful message and exit cleanly if the venv hasn't been created yet — so `make test` never fails with a cryptic error on a fresh clone.
 
 ## Metrics
 

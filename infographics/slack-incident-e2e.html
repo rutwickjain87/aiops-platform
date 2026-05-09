@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slack Incident Bot — End-to-End Flow</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0f1117;
+    color: #e2e8f0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    padding: 40px 20px 60px;
+  }
+
+  .container { max-width: 780px; margin: 0 auto; }
+
+  /* ── Header ──────────────────────────────────────────────────────── */
+  .header { text-align: center; margin-bottom: 48px; }
+  .header .badge {
+    display: inline-block;
+    background: #1e293b; border: 1px solid #334155;
+    border-radius: 20px; padding: 4px 14px;
+    font-size: 11px; color: #7dd3fc; font-weight: 600;
+    letter-spacing: .06em; text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .header h1 { font-size: 26px; font-weight: 700; color: #f8fafc; letter-spacing: -0.4px; }
+  .header p { font-size: 13px; color: #64748b; margin-top: 8px; line-height: 1.5; }
+  .meta-row { display: flex; justify-content: center; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+  .meta-pill { background: #141820; border: 1px solid #1e293b; border-radius: 20px; padding: 4px 14px; font-size: 11px; color: #94a3b8; }
+  .meta-pill span { color: #7dd3fc; font-weight: 600; }
+
+  /* ── Phase block ─────────────────────────────────────────────────── */
+  .phase { margin-bottom: 12px; }
+
+  .phase-header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 16px;
+  }
+  .phase-num {
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800; flex-shrink: 0;
+    border: 1.5px solid;
+  }
+  .phase-title { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .phase-line  { flex: 1; height: 1px; background: #1e293b; }
+  .phase-sub   { font-size: 11px; color: #475569; }
+
+  /* phase colour tokens */
+  .ph-trigger .phase-num { background: #0c1628; border-color: #f59e0b; color: #fbbf24; }
+  .ph-trigger .phase-title { color: #fbbf24; }
+  .ph-agent   .phase-num { background: #130d28; border-color: #7c3aed; color: #a78bfa; }
+  .ph-agent   .phase-title { color: #a78bfa; }
+  .ph-slack   .phase-num { background: #0a1f12; border-color: #15803d; color: #4ade80; }
+  .ph-slack   .phase-title { color: #4ade80; }
+  .ph-human   .phase-num { background: #0c1628; border-color: #1d4ed8; color: #60a5fa; }
+  .ph-human   .phase-title { color: #60a5fa; }
+
+  /* ── Step chain (horizontal) ─────────────────────────────────────── */
+  .chain {
+    display: grid;
+    gap: 0;
+    align-items: start;
+    margin-bottom: 20px;
+  }
+  /* The grid-template-columns is set inline per chain for flexibility */
+
+  .node { display: flex; flex-direction: column; align-items: center; text-align: center; }
+
+  .node-box {
+    background: #141820;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 12px 10px;
+    width: 100%;
+    transition: border-color 0.2s;
+  }
+  .node-box:hover { border-color: #334155; }
+
+  .node-icon { font-size: 20px; margin-bottom: 6px; line-height: 1; }
+  .node-label { font-size: 12px; font-weight: 600; color: #f1f5f9; line-height: 1.3; }
+  .node-sub   { font-size: 10px; color: #475569; margin-top: 4px; line-height: 1.4; }
+
+  /* coloured border per phase */
+  .ph-trigger .node-box { border-color: #292008; }
+  .ph-trigger .node-box:hover { border-color: #78350f; }
+  .ph-agent   .node-box { border-color: #1a0f3a; }
+  .ph-agent   .node-box:hover { border-color: #4c1d95; }
+  .ph-slack   .node-box { border-color: #052e16; }
+  .ph-slack   .node-box:hover { border-color: #166534; }
+  .ph-human   .node-box { border-color: #0c1628; }
+  .ph-human   .node-box:hover { border-color: #1e3a5f; }
+
+  .arrow {
+    display: flex; align-items: center; justify-content: center;
+    padding-top: 20px; color: #334155; font-size: 14px;
+    width: 28px; flex-shrink: 0;
+  }
+
+  /* ── Phase connector (between phases) ────────────────────────────── */
+  .phase-connector {
+    display: flex; align-items: center; gap: 10px;
+    margin: 0 0 24px 0;
+    padding-left: 14px;
+  }
+  .pc-line { width: 2px; height: 32px; background: #1e293b; flex-shrink: 0; }
+  .pc-label { font-size: 11px; color: #475569; font-style: italic; }
+
+  /* ── Card mockup ─────────────────────────────────────────────────── */
+  .card-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .card-wrap { position: relative; }
+  .card-state-badge {
+    position: absolute; top: -10px; left: 12px;
+    font-size: 10px; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; padding: 2px 10px; border-radius: 20px;
+    border: 1px solid; z-index: 1;
+  }
+  .badge-before { background: #0c1628; color: #fbbf24; border-color: #f59e0b; }
+  .badge-after  { background: #0a1f12; color: #4ade80; border-color: #15803d; }
+
+  .slack-card {
+    background: #141820;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 16px;
+    font-size: 11px;
+    position: relative;
+  }
+  .slack-card.locked { opacity: 0.8; }
+
+  .card-sev-bar {
+    width: 3px; border-radius: 2px;
+    position: absolute; left: 0; top: 12px; bottom: 12px;
+    border-radius: 0 0 0 10px;
+  }
+  .sev-p1 { background: #ef4444; }
+  .sev-ack { background: #3b82f6; }
+
+  .card-header-text {
+    font-size: 12px; font-weight: 700; color: #f1f5f9;
+    margin-bottom: 8px; line-height: 1.3;
+  }
+  .card-fields {
+    display: flex; gap: 16px; margin-bottom: 10px;
+  }
+  .card-field { flex: 1; }
+  .card-field-label { font-size: 9px; color: #475569; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 2px; }
+  .card-field-val   { font-size: 11px; color: #94a3b8; }
+
+  .card-section { margin-bottom: 8px; }
+  .card-section-label { font-size: 9px; color: #475569; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
+  .card-section-text  { font-size: 10px; color: #94a3b8; line-height: 1.5; }
+
+  .card-btn-row { display: flex; gap: 5px; margin-top: 10px; }
+  .card-btn {
+    padding: 4px 8px; border-radius: 5px;
+    font-size: 10px; font-weight: 600; border: none;
+    cursor: default;
+  }
+  .btn-ack { background: #1d4ed8; color: #fff; }
+  .btn-esc { background: #991b1b; color: #fca5a5; }
+  .btn-dis { background: #1e293b; color: #94a3b8; }
+
+  .card-footer-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid #1e293b;
+  }
+  .card-footer-text { font-size: 9px; color: #475569; }
+  .card-footer-id   { font-size: 9px; color: #475569; font-family: 'Consolas', monospace; }
+
+  /* acknowledged state */
+  .ack-badge {
+    display: inline-block; background: #0c1628;
+    border: 1px solid #1d4ed8; border-radius: 4px;
+    padding: 2px 8px; font-size: 9px;
+    font-weight: 700; color: #60a5fa;
+    margin-top: 8px;
+  }
+  .ack-actor { font-size: 9px; color: #475569; margin-top: 4px; }
+
+  /* ── Key concepts bar ────────────────────────────────────────────── */
+  .concepts {
+    background: #141820; border: 1px solid #1e293b;
+    border-radius: 12px; padding: 20px;
+    margin-top: 8px;
+  }
+  .concepts-title {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .1em; color: #475569; margin-bottom: 14px;
+  }
+  .concept-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .concept-item {
+    background: #0f1117; border: 1px solid #1e293b;
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .concept-icon { font-size: 14px; margin-bottom: 4px; }
+  .concept-label { font-size: 11px; font-weight: 600; color: #f1f5f9; margin-bottom: 2px; }
+  .concept-desc  { font-size: 10px; color: #64748b; line-height: 1.5; }
+
+  /* ── Legend ──────────────────────────────────────────────────────── */
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 32px; justify-content: center; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #64748b; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="badge">Day 5 — Slack Incident Bot</div>
+    <h1>Incident — End-to-End Flow</h1>
+    <p>From alert firing to human acknowledgement — every hop across 4 phases.</p>
+    <div class="meta-row">
+      <div class="meta-pill">Phases: <span>4</span></div>
+      <div class="meta-pill">LLM calls: <span>2 tool calls / alert</span></div>
+      <div class="meta-pill">Model: <span>Haiku 4.5</span></div>
+      <div class="meta-pill">Transport: <span>Socket Mode</span></div>
+    </div>
+  </div>
+
+  <!-- Phase 1: Trigger -->
+  <div class="phase ph-trigger">
+    <div class="phase-header">
+      <div class="phase-num">①</div>
+      <div class="phase-title">Trigger</div>
+      <div class="phase-line"></div>
+      <div class="phase-sub">alert fires → bot.py → planner</div>
+    </div>
+    <div class="chain" style="grid-template-columns: 1fr 28px 1fr 28px 1fr;">
+      <div class="node">
+        <div class="node-box">
+          <div class="node-icon">🚨</div>
+          <div class="node-label">Alert fires</div>
+          <div class="node-sub">Prometheus / synthetic ALERT-001</div>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="node-box">
+          <div class="node-icon">📟</div>
+          <div class="node-label">bot.py</div>
+          <div class="node-sub">--trigger ALERT-001</div>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="node-box">
+          <div class="node-icon">🔀</div>
+          <div class="node-label">trigger_alert()</div>
+          <div class="node-sub">calls IncidentPlanner</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase-connector">
+    <div class="pc-line"></div>
+    <div class="pc-label">passes alert_id to agent</div>
+  </div>
+
+  <!-- Phase 2: Agent ReAct loop -->
+  <div class="phase ph-agent">
+    <div class="phase-header">
+      <div class="phase-num">②</div>
+      <div class="phase-title">Agent — ReAct Loop</div>
+      <div class="phase-line"></div>
+      <div class="phase-sub">Haiku · 2 tool calls · MAX_ITERATIONS = 10</div>
+    </div>
+    <div class="chain" style="grid-template-columns: 1fr 28px 1fr 28px 1fr 28px 1fr;">
+      <div class="node">
+        <div class="node-box">
+          <div class="node-icon">🔍</div>
+          <div class="node-label">get_alert_context</div>
+          <div class="node-sub">tool call 1 — fetch alert payload</div>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="node-box">
+          <div class="node-icon">🧠</div>
+          <div class="node-label">LLM reasons</div>
+          <div class="node-sub">severity · root cause · 3–5 actions</div>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="node-box">
+          <div class="node-icon">📤</div>
+          <div class="node-label">post_incident_card</div>
+          <div class="node-sub">tool call 2 — builds Block Kit JSON</div>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="node-box">
+          <div class="node-icon">✅</div>
+          <div class="node-label">end_turn</div>
+          <div class="node-sub">returns ts + incident_id</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase-connector">
+    <div class="pc-line"></div>
+    <div class="pc-label">chat_postMessage → Slack API → #incidents channel</div>
+  </div>
+
+  <!-- Phase 3: Slack card -->
+  <div class="phase ph-slack">
+    <div class="phase-header">
+      <div class="phase-num">③</div>
+      <div class="phase-title">Card appears in #incidents</div>
+      <div class="phase-line"></div>
+      <div class="phase-sub">Block Kit JSON rendered by Slack</div>
+    </div>
+
+    <div class="card-grid">
+      <!-- Before: Open card -->
+      <div class="card-wrap">
+        <div class="card-state-badge badge-before">Before — Open</div>
+        <div class="slack-card">
+          <div class="card-sev-bar sev-p1"></div>
+          <div class="card-header-text">🔴 P1 — DataNode replication factor below threshold</div>
+          <div class="card-fields">
+            <div class="card-field">
+              <div class="card-field-label">Service</div>
+              <div class="card-field-val">hdfs-namenode</div>
+            </div>
+            <div class="card-field">
+              <div class="card-field-label">Time</div>
+              <div class="card-field-val">08:42 UTC · 08 May</div>
+            </div>
+          </div>
+          <div class="card-section">
+            <div class="card-section-label">🔍 Root Cause</div>
+            <div class="card-section-text">1,847 under-replicated blocks on dn-03. Disk saturation stopping write replicas.</div>
+          </div>
+          <div class="card-section">
+            <div class="card-section-label">🛠 Suggested Actions</div>
+            <div class="card-section-text">• hdfs dfsadmin -report | grep dn-03<br>• df -h /data on dn-03<br>• Decommission dn-03</div>
+          </div>
+          <div class="card-btn-row">
+            <div class="card-btn btn-ack">✅ Acknowledge</div>
+            <div class="card-btn btn-esc">🚨 Escalate</div>
+            <div class="card-btn btn-dis">❌ Dismiss</div>
+          </div>
+          <div class="card-footer-row">
+            <div class="card-footer-text">🟢 Open</div>
+            <div class="card-footer-id">INC-20240508-001</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- After: Acknowledged card -->
+      <div class="card-wrap">
+        <div class="card-state-badge badge-after">After — Acknowledged</div>
+        <div class="slack-card locked">
+          <div class="card-sev-bar sev-ack"></div>
+          <div class="card-header-text">🔴 P1 — DataNode replication factor below threshold</div>
+          <div class="card-fields">
+            <div class="card-field">
+              <div class="card-field-label">Service</div>
+              <div class="card-field-val">hdfs-namenode</div>
+            </div>
+            <div class="card-field">
+              <div class="card-field-label">Time</div>
+              <div class="card-field-val">08:42 UTC · 08 May</div>
+            </div>
+          </div>
+          <div class="card-section">
+            <div class="card-section-label">🔍 Root Cause</div>
+            <div class="card-section-text">1,847 under-replicated blocks on dn-03. Disk saturation stopping write replicas.</div>
+          </div>
+          <div class="card-section">
+            <div class="card-section-label">🛠 Suggested Actions</div>
+            <div class="card-section-text">• hdfs dfsadmin -report | grep dn-03<br>• df -h /data on dn-03</div>
+          </div>
+          <!-- buttons removed after action -->
+          <div class="ack-badge">👀 Acknowledged</div>
+          <div class="card-footer-row" style="margin-top:8px">
+            <div class="card-footer-text" style="color:#60a5fa">Updated by @rutwick</div>
+            <div class="card-footer-id">08:44 UTC 08 May</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase-connector">
+    <div class="pc-line"></div>
+    <div class="pc-label">on-call clicks button → Slack sends action payload via Socket Mode</div>
+  </div>
+
+  <!-- Phase 4: Human action -->
+  <div class="phase ph-human">
+    <div class="phase-header">
+      <div class="phase-num">④</div>
+      <div class="phase-title">Human action → card locks in-place</div>
+      <div class="phase-line"></div>
+      <div class="phase-sub">handlers.py · ack() in &lt;3 s · chat_update same ts</div>
+    </div>
+    <div class="chain" style="grid-template-columns: 1fr 28px 1fr 28px 1fr 28px 1fr;">
+      <div class="node">
+        <div class="node-box">
+          <div class="node-icon">👆</div>
+          <div class="node-label">Button clicked</div>
+          <div class="node-sub">Slack delivers action payload</div>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="node-box">
+          <div class="node-icon">⚡</div>
+          <div class="node-label">handlers.py</div>
+          <div class="node-sub">ack() immediately · &lt;3 s deadline</div>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="node-box">
+          <div class="node-icon">✏️</div>
+          <div class="node-label">chat_update</div>
+          <div class="node-sub">same ts · buttons removed</div>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="node-box">
+          <div class="node-icon">🔒</div>
+          <div class="node-label">Card locked</div>
+          <div class="node-sub">INCIDENT_STORE updated</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Key concepts -->
+  <div class="concepts">
+    <div class="concepts-title">Key Design Decisions</div>
+    <div class="concept-grid">
+      <div class="concept-item">
+        <div class="concept-icon">🔁</div>
+        <div class="concept-label">ReAct loop — exactly 2 iterations</div>
+        <div class="concept-desc">Tool call 1: get context. Tool call 2: post card. end_turn on success. MAX_ITERATIONS = 10 safety cap prevents runaway loops.</div>
+      </div>
+      <div class="concept-item">
+        <div class="concept-icon">🔌</div>
+        <div class="concept-icon">⚡</div>
+        <div class="concept-label">Socket Mode — no public URL needed</div>
+        <div class="concept-desc">Bot opens a persistent WebSocket to Slack. Slack pushes events over it. No ngrok, no deployment required for local dev.</div>
+      </div>
+      <div class="concept-item">
+        <div class="concept-icon">📝</div>
+        <div class="concept-label">Idempotent in-place updates</div>
+        <div class="concept-desc">card is edited via chat_update using the original message ts. Buttons disappear after first click — no double-acknowledgement possible.</div>
+      </div>
+      <div class="concept-item">
+        <div class="concept-icon">💉</div>
+        <div class="concept-label">Slack client injected at call time</div>
+        <div class="concept-desc">tools.py has no module-level Slack import. Client is passed as a kwarg. Makes all tools fully testable without credentials (dry-run path).</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#0c1628;border-color:#f59e0b"></div>Trigger layer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#130d28;border-color:#7c3aed"></div>Agent / LLM</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#0a1f12;border-color:#15803d"></div>Slack output</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#0c1628;border-color:#1d4ed8"></div>Human action</div>
+  </div>
+
+</div>
+</body>
+</html>

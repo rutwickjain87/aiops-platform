@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slack Bot — Setup &amp; Configuration</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0f1117;
+    color: #e2e8f0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    padding: 40px 20px 60px;
+  }
+
+  .container { max-width: 780px; margin: 0 auto; }
+
+  /* ── Header ─────────────────────────────────────────────────────── */
+  .header { text-align: center; margin-bottom: 48px; }
+  .header .badge {
+    display: inline-block;
+    background: #1e293b; border: 1px solid #334155;
+    border-radius: 20px; padding: 4px 14px;
+    font-size: 11px; color: #7dd3fc; font-weight: 600;
+    letter-spacing: .06em; text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .header h1 {
+    font-size: 26px; font-weight: 700;
+    color: #f8fafc; letter-spacing: -0.4px;
+  }
+  .header p { font-size: 13px; color: #64748b; margin-top: 8px; line-height: 1.5; }
+
+  .meta-row {
+    display: flex; justify-content: center; gap: 12px;
+    margin-top: 16px; flex-wrap: wrap;
+  }
+  .meta-pill {
+    background: #141820; border: 1px solid #1e293b;
+    border-radius: 20px; padding: 4px 14px;
+    font-size: 11px; color: #94a3b8;
+  }
+  .meta-pill span { color: #7dd3fc; font-weight: 600; }
+
+  /* ── Step grid ────────────────────────────────────────────────────── */
+  .steps { display: flex; flex-direction: column; gap: 0; }
+
+  .step-row {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: 0 16px;
+    position: relative;
+  }
+
+  /* vertical connector */
+  .step-row:not(:last-child) .step-left::after {
+    content: '';
+    position: absolute;
+    left: 25px;
+    top: 52px;
+    bottom: 0;
+    width: 2px;
+    background: #1e293b;
+  }
+
+  .step-left {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    padding-bottom: 24px;
+  }
+
+  .step-num {
+    width: 50px; height: 50px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 800;
+    flex-shrink: 0;
+    border: 2px solid;
+    z-index: 1;
+    position: relative;
+  }
+
+  /* phase colour bands */
+  .s1 .step-num { background: #0c1628; border-color: #1d4ed8; color: #60a5fa; }
+  .s2 .step-num { background: #0c1628; border-color: #1d4ed8; color: #60a5fa; }
+  .s3 .step-num { background: #130d28; border-color: #7c3aed; color: #a78bfa; }
+  .s4 .step-num { background: #130d28; border-color: #7c3aed; color: #a78bfa; }
+  .s5 .step-num { background: #0a1a1a; border-color: #0e7490; color: #22d3ee; }
+  .s6 .step-num { background: #0a1a1a; border-color: #0e7490; color: #22d3ee; }
+  .s7 .step-num { background: #0a1f12; border-color: #15803d; color: #4ade80; }
+  .s8 .step-num { background: #0a1f12; border-color: #15803d; color: #4ade80; }
+
+  .step-body {
+    background: #141820;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+    transition: border-color 0.2s;
+  }
+  .step-body:hover { border-color: #334155; }
+
+  .step-meta {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .step-title {
+    font-size: 14px; font-weight: 700; color: #f1f5f9;
+  }
+
+  .step-nav {
+    font-size: 10px; color: #475569;
+    background: #0f1117; border: 1px solid #1e293b;
+    border-radius: 6px; padding: 2px 8px;
+    white-space: nowrap; flex-shrink: 0;
+  }
+
+  .step-desc {
+    font-size: 12px; color: #94a3b8; line-height: 1.6;
+    margin-bottom: 10px;
+  }
+
+  /* token output boxes */
+  .token-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .token {
+    display: flex; align-items: center; gap: 6px;
+    background: #0f1117; border: 1px solid #1e293b;
+    border-radius: 6px; padding: 6px 10px;
+  }
+  .token-key {
+    font-size: 10px; font-weight: 700;
+    color: #7dd3fc; font-family: 'Consolas', monospace;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .token-eq { color: #475569; font-size: 10px; }
+  .token-val {
+    font-size: 10px; color: #a78bfa;
+    font-family: 'Consolas', monospace;
+  }
+
+  /* scope chips */
+  .scope-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .scope {
+    background: #1e293b; border-radius: 4px;
+    padding: 2px 8px; font-size: 11px;
+    font-family: 'Consolas', monospace;
+    color: #94a3b8;
+  }
+
+  /* phase dividers */
+  .phase-divider {
+    display: flex; align-items: center; gap: 10px;
+    margin: 4px 0 20px 68px;
+  }
+  .phase-label {
+    font-size: 10px; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase; padding: 3px 10px;
+    border-radius: 20px;
+  }
+  .phase-line { flex: 1; height: 1px; background: #1e293b; }
+
+  .ph-app    .phase-label { background: #0c1628; color: #60a5fa; border: 1px solid #1d4ed8; }
+  .ph-perms  .phase-label { background: #130d28; color: #a78bfa; border: 1px solid #7c3aed; }
+  .ph-events .phase-label { background: #0a1a1a; color: #22d3ee; border: 1px solid #0e7490; }
+  .ph-run    .phase-label { background: #0a1f12; color: #4ade80; border: 1px solid #15803d; }
+
+  /* ── Terminal block ────────────────────────────────────────────── */
+  .terminal {
+    background: #0a0d13;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-top: 24px;
+    font-family: 'Consolas', 'Monaco', monospace;
+  }
+  .terminal-bar {
+    display: flex; align-items: center; gap: 6px; margin-bottom: 14px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot-r { background: #ef4444; }
+  .dot-y { background: #f59e0b; }
+  .dot-g { background: #10b981; }
+  .terminal-label { font-size: 11px; color: #475569; margin-left: 6px; }
+  .line { font-size: 12px; line-height: 2; }
+  .line .c { color: #475569; }   /* comment */
+  .line .k { color: #89b4fa; }   /* key */
+  .line .v { color: #a6e3a1; }   /* value */
+  .line .cmd { color: #cdd6f4; } /* command */
+  .line .flag { color: #fab387; }/* flag */
+
+  /* ── Legend ────────────────────────────────────────────────────── */
+  .legend {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    margin-top: 32px; justify-content: center;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #64748b; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="badge">Day 5 — Slack Incident Bot</div>
+    <h1>Slack App — Setup &amp; Configuration</h1>
+    <p>8 steps from api.slack.com to a running Socket Mode bot on your machine.<br>
+       Complete steps 1–8 before running <code style="color:#7dd3fc;background:#141820;padding:2px 6px;border-radius:4px;font-size:12px">python bot.py --trigger ALERT-001</code>.</p>
+    <div class="meta-row">
+      <div class="meta-pill">Steps: <span>8</span></div>
+      <div class="meta-pill">Tokens collected: <span>3</span></div>
+      <div class="meta-pill">Mode: <span>Socket Mode</span></div>
+      <div class="meta-pill">Time: <span>~10 min</span></div>
+    </div>
+  </div>
+
+  <!-- Phase: App Creation -->
+  <div class="phase-divider ph-app">
+    <div class="phase-label">App Creation</div>
+    <div class="phase-line"></div>
+  </div>
+
+  <div class="steps">
+
+    <div class="step-row s1">
+      <div class="step-left"><div class="step-num">1</div></div>
+      <div class="step-body">
+        <div class="step-meta">
+          <div class="step-title">Create a free Slack workspace</div>
+          <div class="step-nav">▸ slack.com/get-started</div>
+        </div>
+        <div class="step-desc">
+          Go to slack.com/get-started → <strong style="color:#f1f5f9">Create a Workspace</strong>.
+          Name it anything — e.g. <em>aiops-lab</em>. Skip the "invite teammates" screen.
+          You can be the sole member.
+        </div>
+      </div>
+    </div>
+
+    <div class="step-row s2">
+      <div class="step-left"><div class="step-num">2</div></div>
+      <div class="step-body">
+        <div class="step-meta">
+          <div class="step-title">Create a Slack App from scratch</div>
+          <div class="step-nav">▸ api.slack.com/apps</div>
+        </div>
+        <div class="step-desc">
+          api.slack.com/apps → <strong style="color:#f1f5f9">Create New App</strong> → <strong style="color:#f1f5f9">From scratch</strong><br>
+          App name: <em>AIOps Incident Bot</em> · pick your <em>aiops-lab</em> workspace → Create App.
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Phase: Permissions & Socket -->
+  <div class="phase-divider ph-perms">
+    <div class="phase-label">Permissions &amp; Socket Mode</div>
+    <div class="phase-line"></div>
+  </div>
+
+  <div class="steps">
+
+    <div class="step-row s3">
+      <div class="step-left"><div class="step-num">3</div></div>
+      <div class="step-body">
+        <div class="step-meta">
+          <div class="step-title">Enable Socket Mode → generate App Token</div>
+          <div class="step-nav">▸ Settings → Socket Mode</div>
+        </div>
+        <div class="step-desc">
+          Left sidebar → <strong style="color:#f1f5f9">Settings</strong> → <strong style="color:#f1f5f9">Socket Mode</strong> → toggle ON.<br>
+          Generate App-Level Token · name: <em>local-dev</em> · scope: <code style="font-size:11px;color:#a78bfa">connections:write</code> → Generate.
+        </div>
+        <div class="token-row">
+          <div class="token">
+            <span class="token-key">SLACK_APP_TOKEN</span>
+            <span class="token-eq">=</span>
+            <span class="token-val">xapp-1-…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step-row s4">
+      <div class="step-left"><div class="step-num">4</div></div>
+      <div class="step-body">
+        <div class="step-meta">
+          <div class="step-title">Add Bot Token Scopes</div>
+          <div class="step-nav">▸ Features → OAuth &amp; Permissions</div>
+        </div>
+        <div class="step-desc">
+          Scroll to <strong style="color:#f1f5f9">Bot Token Scopes</strong> → Add an OAuth Scope → add all four:
+        </div>
+        <div class="scope-row">
+          <div class="scope">chat:write</div>
+          <div class="scope">chat:write.public</div>
+          <div class="scope">channels:read</div>
+          <div class="scope">reactions:write</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Phase: Events & Interactivity -->
+  <div class="phase-divider ph-events">
+    <div class="phase-label">Events &amp; Interactivity</div>
+    <div class="phase-line"></div>
+  </div>
+
+  <div class="steps">
+
+    <div class="step-row s5">
+      <div class="step-left"><div class="step-num">5</div></div>
+      <div class="step-body">
+        <div class="step-meta">
+          <div class="step-title">Enable Interactivity (button callbacks)</div>
+          <div class="step-nav">▸ Features → Interactivity &amp; Shortcuts</div>
+        </div>
+        <div class="step-desc">
+          Toggle <strong style="color:#f1f5f9">Enable Interactivity</strong> → ON.<br>
+          The Request URL field is required but bypassed by Socket Mode —
+          enter <code style="font-size:11px;color:#22d3ee">https://placeholder.example.com</code> to pass validation.
+        </div>
+      </div>
+    </div>
+
+    <div class="step-row s6">
+      <div class="step-left"><div class="step-num">6</div></div>
+      <div class="step-body">
+        <div class="step-meta">
+          <div class="step-title">Subscribe to Bot Events</div>
+          <div class="step-nav">▸ Features → Event Subscriptions</div>
+        </div>
+        <div class="step-desc">
+          Enable Events → ON · scroll to <strong style="color:#f1f5f9">Subscribe to bot events</strong> → Add Bot User Event:
+        </div>
+        <div class="scope-row">
+          <div class="scope">message.channels</div>
+          <div class="scope">app_mention</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Phase: Install & Run -->
+  <div class="phase-divider ph-run">
+    <div class="phase-label">Install &amp; Run</div>
+    <div class="phase-line"></div>
+  </div>
+
+  <div class="steps">
+
+    <div class="step-row s7">
+      <div class="step-left"><div class="step-num">7</div></div>
+      <div class="step-body">
+        <div class="step-meta">
+          <div class="step-title">Install to workspace → get Bot Token</div>
+          <div class="step-nav">▸ Features → OAuth &amp; Permissions</div>
+        </div>
+        <div class="step-desc">
+          Click <strong style="color:#f1f5f9">Install to Workspace</strong> → Allow.<br>
+          Copy the <strong style="color:#f1f5f9">Bot User OAuth Token</strong> at the top of the page.
+        </div>
+        <div class="token-row">
+          <div class="token">
+            <span class="token-key">SLACK_BOT_TOKEN</span>
+            <span class="token-eq">=</span>
+            <span class="token-val">xoxb-…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step-row s8">
+      <div class="step-left"><div class="step-num">8</div></div>
+      <div class="step-body">
+        <div class="step-meta">
+          <div class="step-title">Create #incidents channel, invite bot, copy ID</div>
+          <div class="step-nav">▸ Slack desktop app</div>
+        </div>
+        <div class="step-desc">
+          Create channel <strong style="color:#f1f5f9">#incidents</strong> → channel details → Integrations → Add apps → <em>AIOps Incident Bot</em>.<br>
+          Copy Channel ID from the URL bar or Details panel (starts with <code style="font-size:11px;color:#4ade80">C</code>).
+        </div>
+        <div class="token-row">
+          <div class="token">
+            <span class="token-key">SLACK_CHANNEL_ID</span>
+            <span class="token-eq">=</span>
+            <span class="token-val">C0XXXXXXXXX</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Terminal block -->
+  <div class="terminal">
+    <div class="terminal-bar">
+      <div class="dot dot-r"></div>
+      <div class="dot dot-y"></div>
+      <div class="dot dot-g"></div>
+      <span class="terminal-label">agents/slack-incident-bot/</span>
+    </div>
+    <div class="line"><span class="c"># 1. copy and fill the env file</span></div>
+    <div class="line"><span class="cmd">cp .env.example .env</span></div>
+    <div class="line">&nbsp;</div>
+    <div class="line"><span class="c"># 2. install deps into the agent venv</span></div>
+    <div class="line"><span class="cmd">uv venv .venv <span class="flag">&amp;&amp;</span> uv pip install <span class="flag">-r</span> requirements.txt</span></div>
+    <div class="line">&nbsp;</div>
+    <div class="line"><span class="c"># 3. fire ALERT-001 and keep listening for button clicks</span></div>
+    <div class="line"><span class="cmd">python bot.py <span class="flag">--trigger</span> ALERT-001</span></div>
+    <div class="line">&nbsp;</div>
+    <div class="line"><span class="c"># expected output</span></div>
+    <div class="line"><span class="v">INFO  Triggering alert: ALERT-001</span></div>
+    <div class="line"><span class="v">INFO  Incident INC-… posted (ts=…) in 2 iterations</span></div>
+    <div class="line"><span class="v">INFO  Starting Socket Mode listener…</span></div>
+  </div>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#0c1628;border-color:#1d4ed8"></div>
+      App creation
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#130d28;border-color:#7c3aed"></div>
+      Permissions &amp; Socket Mode
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#0a1a1a;border-color:#0e7490"></div>
+      Events &amp; Interactivity
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#0a1f12;border-color:#15803d"></div>
+      Install &amp; run
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

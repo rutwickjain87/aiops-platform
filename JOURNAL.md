@@ -261,3 +261,147 @@ Full details captured in `pr-reviewer-arch-guidelines.docx`.
 - `ai-review.yml` ✅ passing (rate limit handled gracefully)
 
 **Next:** Day 5
+
+---
+
+## Day 5 — Slack Incident Bot + LangSmith Observability
+
+**Date:** 2026-05-08
+**Theme:** Real-time Slack agent with end-to-end LangSmith tracing
+
+---
+
+### What Was Built
+
+**Slack Incident Bot** — a production-style Slack Socket Mode bot that:
+- Listens for `@incident ALERT-ID` mentions and `!trigger ALERT-ID` CLI commands
+- Runs a ReAct loop (Anthropic SDK, `claude-haiku-4-5-20251001`) that calls two tools in sequence:
+  1. `get_alert_context(alert_id)` — looks up alert metadata from a local store
+  2. `post_incident_card(...)` — formats and posts a structured Slack Block Kit card
+- Posts a rich incident card (severity badge, title, runbook link, acknowledgement button) to a configured Slack channel
+
+Agent entrypoint: `agents/slack-incident-bot/`
+Key files: `app.py`, `planner.py`, `tools.py`, `memory.py`, `tracing.py`
+
+**LangSmith Observability Layer** — `tracing.py` wraps the bot with full trace visibility:
+- `init_tracing_client(anthropic_client)` — wraps the plain `anthropic.Anthropic()` client with `langsmith.wrappers.wrap_anthropic()` so every `messages.create()` call is auto-traced as a child LLM run
+- `ls_traceable(name, run_type, tags)` — decorator factory that applies `@langsmith.traceable` when tracing is enabled; returns the original function unchanged when disabled (no-op)
+- Every `handle_alert()` call appears in LangSmith as one trace tree:
+
+```
+incident_planner.handle_alert  [chain]
+  ├─ ChatAnthropic [llm]  ← get_alert_context turn (prompt + completion tokens)
+  └─ ChatAnthropic [llm]  ← post_incident_card turn (prompt + completion tokens)
+```
+
+**Makefile multi-venv overhaul** — the root Makefile now manages two fully independent venvs:
+- `agents/log-intelligence/.venv` (for Day 2 log agent)
+- `agents/slack-incident-bot/.venv` (for Day 5 bot)
+
+Targets added: `setup-log`, `setup-bot`, `test-log`, `test-bot`; guard checks print a helpful message and exit 1 if the venv binary is missing rather than a cryptic `No such file` from make.
+
+**Bot test suite** — 24 unit tests in `tests/test_slack_bot.py`:
+- Planner logic: ReAct loop, tool dispatch, `post_incident_card` extraction from tool result
+- Tools: alert lookup, incident card Slack API call mocking, idempotent update
+- Graceful degradation: all tests pass with `langsmith` installed or absent
+
+---
+
+### Key Concepts Learned
+
+**`wrap_anthropic()` is zero-config tracing.** LangSmith's `wrap_anthropic(client)` shim intercepts every `messages.create()` call transparently — no changes to the call site. All token counts, latency, model name, and prompt/response content appear automatically. The only requirement is a `LANGSMITH_API_KEY` and `LANGSMITH_TRACING=true` in the environment.
+
+**`LANGSMITH_*` vs `LANGCHAIN_*` env var naming.** LangSmith SDK ≥ 0.2 renamed the environment variables:
+- `LANGCHAIN_TRACING_V2=true` → `LANGSMITH_TRACING=true`
+- `LANGCHAIN_API_KEY` → `LANGSMITH_API_KEY`
+- `LANGCHAIN_PROJECT` → `LANGSMITH_PROJECT`
+
+The old names still work as a fallback, but the LangSmith UI now shows the new names. `tracing.py` checks both so either works in `.env`.
+
+**Graceful degradation with optional packages.** Wrapping the `from langsmith import ...` block in `try/except ImportError` and gating all behaviour on `_LANGSMITH_AVAILABLE` means the module is always importable. Tests don't need to mock the package away — they run the same code paths regardless of whether `langsmith` is installed.
+
+**Decorator factories must handle both bare and parametrised usage.** `@ls_traceable` (no parens) passes the function as the first argument; `@ls_traceable(name="...")` must return a decorator. The pattern `if fn is not None: return decorator(fn)` handles both cases without requiring two separate functions.
+
+**Sandbox-built venvs are never portable.** Python shebang lines in `.venv/bin/python` are absolute paths baked at creation time. A venv created inside the sandbox (`/sessions/vigilant-lucid-darwin/...`) will not work on the Mac. Always delete any sandbox-created venv and recreate it locally with `make setup-bot`.
+
+**`uv pip install --python <path>` keeps multi-agent deps isolated.** Using `uv pip install -r requirements.txt --python .venv/bin/python` inside each agent directory installs deps into that agent's venv without activating it globally — safe to run from the repo root Makefile without directory-change side effects.
+
+**Slack Socket Mode requires two tokens.** `SLACK_APP_TOKEN` (xapp-) enables Socket Mode (WebSocket connection to Slack's RTM servers); `SLACK_BOT_TOKEN` (xoxb-) authenticates API calls (posting messages, fetching user info). Both are required; confusing them produces a silent authentication failure.
+
+---
+
+### Architecture: Observability in the Agent Loop
+
+```
+handle_alert(alert_id)                        ← @ls_traceable parent span
+│
+├─ client.messages.create(...)                ← auto-traced by wrap_anthropic()
+│    stop_reason = "tool_use"
+│    block.name  = "get_alert_context"
+│
+├─ _dispatch("get_alert_context", {alert_id}) ← plain Python, no trace span needed
+│
+├─ client.messages.create(...)                ← auto-traced (2nd LLM turn)
+│    stop_reason = "tool_use"
+│    block.name  = "post_incident_card"
+│
+├─ _dispatch("post_incident_card", {...})     ← Slack API call
+│
+└─ client.messages.create(...)                ← auto-traced (final turn)
+     stop_reason = "end_turn"
+     → return {"incident_id": ..., "status": "done", "iterations": 3}
+```
+
+The chain span captures total latency and I/O; the nested LLM runs capture per-turn token usage and model name. This gives a complete cost and latency breakdown per incident in the LangSmith UI.
+
+---
+
+### Bugs Fixed (in order encountered)
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| `zsh: command not found: pytest` | System Python used, bot venv not activated | Activate venv: `source agents/slack-incident-bot/.venv/bin/activate` or use `make test-bot` |
+| `bad interpreter: /sessions/vigilant-lucid-darwin/...` | Venv created in sandbox with sandbox-specific shebang | `rm -rf agents/slack-incident-bot/.venv && make setup-bot` on local Mac |
+| `zsh: no such file or directory: .venv/bin/pytest` | `pytest` not in `requirements.txt`; venv never created locally | Added `pytest>=8.0` + `pytest-cov>=5.0` to `requirements.txt`; run `make setup-bot` |
+| `make test` fails on `test-log` (no log venv) | `test` depends on both `test-log` and `test-bot`; log venv not built | Added guard: if `$(LOG_PYTEST)` doesn't exist, print message and `exit 1` |
+| LangSmith "Waiting for traces..." | `.env` used old `LANGCHAIN_TRACING_V2` / `LANGCHAIN_API_KEY` names; LangSmith SDK now expects `LANGSMITH_*` | Updated `tracing.py` to check both; updated `.env` to use new canonical names |
+| `export VAR="value"` in `.env` | Shell syntax in dotenv file; `python-dotenv` requires `KEY=value` | Rewrote `.env` to plain `KEY=value` format; removed all `export` prefixes |
+
+---
+
+### Current Status
+
+- `agents/slack-incident-bot/tracing.py` ✅ LangSmith integration with graceful fallback
+- `agents/slack-incident-bot/planner.py` ✅ `@ls_traceable` + `init_tracing_client` wired in
+- `agents/slack-incident-bot/requirements.txt` ✅ `langsmith>=0.1.77` added
+- `agents/slack-incident-bot/.env.example` ✅ updated to `LANGSMITH_*` variable names
+- `Makefile` ✅ multi-venv targets: `setup-bot`, `test-bot`, `setup-log`, `test-log`
+- `SETUP.md` / `SCHEDULE.md` ✅ restored to `aiops-platform/` root (originals from Day 1)
+- `docs/setup.md` ✅ Day 5 Slack + LangSmith setup guide
+- `docs/schedule.md` ✅ daily ops runbook with morning health checks
+
+**Pending (run locally):**
+```bash
+# 1. Rebuild bot venv on Mac (sandbox venv won't work)
+make setup-bot
+
+# 2. Run the 24-test suite
+make test-bot
+
+# 3. Test live tracing (ensure .env has LANGSMITH_* keys set)
+cd agents/slack-incident-bot
+python app.py --trigger ALERT-001
+
+# 4. Commit all Day 5 work
+git add agents/slack-incident-bot/tracing.py \
+        agents/slack-incident-bot/planner.py \
+        agents/slack-incident-bot/requirements.txt \
+        agents/slack-incident-bot/.env.example \
+        docs/setup.md docs/schedule.md \
+        SETUP.md SCHEDULE.md Makefile \
+        README.md CONTRIBUTING.md JOURNAL.md
+git commit -m "feat(day5): Slack incident bot + LangSmith tracing + Makefile multi-venv"
+git push
+```
+
+**Next:** Day 6

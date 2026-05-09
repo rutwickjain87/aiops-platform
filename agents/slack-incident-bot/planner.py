@@ -17,6 +17,18 @@ Claude calls post_incident_card(incident_id, severity, title, ...)
   ▼ (tool result injected → "ok": true)
 Claude stops (end_turn)
 
+OBSERVABILITY
+─────────────
+When LANGCHAIN_TRACING_V2=true and LANGCHAIN_API_KEY are set, every run
+is traced to LangSmith:
+
+  incident_planner.handle_alert  [chain]
+    ├─ ChatAnthropic [llm]  ← get_alert_context turn
+    └─ ChatAnthropic [llm]  ← post_incident_card turn
+
+Set LANGCHAIN_PROJECT to control which LangSmith project receives the
+traces (default: "slack-incident-bot").
+
 Usage
 ─────
     from planner import IncidentPlanner
@@ -34,6 +46,7 @@ import anthropic
 
 from memory import Memory, SYSTEM_PROMPT
 from tools import TOOLS, TOOL_FUNCTIONS
+from tracing import init_tracing_client, ls_traceable
 
 # Safety cap: prevent runaway loops on unexpected LLM behaviour
 MAX_ITERATIONS = 10
@@ -56,11 +69,22 @@ class IncidentPlanner:
         self._slack = slack_client
         self._channel_id = channel_id or os.environ.get("SLACK_CHANNEL_ID")
         self._config = config or PlannerConfig()
-        self._client = anthropic.Anthropic()
+        # wrap_anthropic auto-traces every messages.create() call to LangSmith
+        # when tracing is enabled; falls back to plain client otherwise.
+        self._client = init_tracing_client(anthropic.Anthropic())
         self._memory = Memory()
 
+    @ls_traceable(
+        name="incident_planner.handle_alert",
+        run_type="chain",
+        tags=["slack-incident-bot"],
+    )
     def handle_alert(self, alert_id: str) -> dict[str, Any]:
         """Process a single alert end-to-end.
+
+        Decorated with @ls_traceable so the full execution appears as a
+        top-level chain run in LangSmith, with the two LLM turns nested
+        underneath as child runs.
 
         Returns a dict with keys: incident_id, ts, status, iterations.
         Raises RuntimeError if the agent exceeds MAX_ITERATIONS.

@@ -7,12 +7,14 @@ Thanks for your interest. This is an actively maintained portfolio + research re
 ```bash
 git clone https://github.com/<your-username>/aiops-platform
 cd aiops-platform
-uv venv && source .venv/bin/activate
-uv pip install -r requirements_anthropic.txt  # or requirements_langchain.txt for LangChain backend
-cp .env.example .env  # fill in API keys
-make test
-make eval
+cp .env.example .env        # fill in API keys
+
+make setup                  # bootstrap all agent venvs (one-time, after clone)
+make test                   # run all unit tests
+make eval                   # run eval suite (≥80% threshold required)
 ```
+
+Run `make` (bare) to see all available targets with descriptions.
 
 If `make test` and `make eval` both pass, you're set up.
 
@@ -36,10 +38,12 @@ If `make test` and `make eval` both pass, you're set up.
 
 ## Code style
 
-- **Python:** `ruff format` and `ruff check` (run `make lint`).
+- **Python:** `ruff format` and `ruff check` — run `make lint` to check, `make fmt` to auto-fix.
 - **Type hints:** mandatory on public functions; encouraged elsewhere.
 - **Docstrings:** required on tools, planners, and any function that touches an LLM.
 - **Tools must be Pydantic-typed:** Pydantic in, Pydantic out. Tools never read the system prompt.
+
+PRs that fail `make lint` are blocked at CI. Run it locally before pushing.
 
 ## Agent design conventions
 
