@@ -67,10 +67,10 @@ jobs:
 
       - name: Pre-flight diagnostics
         run: |
+          AGENT_PYTHON=agents/log-intelligence/.venv/bin/python
           echo "=== Python / venv ==="
-          source agents/log-intelligence/.venv/bin/activate
-          python --version
-          python -c "import anthropic; print('anthropic', anthropic.__version__)"
+          $AGENT_PYTHON --version
+          $AGENT_PYTHON -c "import anthropic; print('anthropic', anthropic.__version__)"
 
           echo ""
           echo "=== Log file ==="
@@ -118,12 +118,15 @@ jobs:
               > evals/results/latest.json
             exit 0
           fi
-          # Activate the agent venv here — each `run:` step gets a fresh shell,
-          # so activations from previous steps do not carry over.
-          source agents/log-intelligence/.venv/bin/activate
+          # Use the venv Python directly — avoids shell activation which can fail
+          # silently in GitHub Actions (no set -e), falling back to system Python
+          # that has no anthropic installed.
+          AGENT_PYTHON=agents/log-intelligence/.venv/bin/python
+          echo "Python: $($AGENT_PYTHON --version)"
+          echo "anthropic: $($AGENT_PYTHON -c 'import anthropic; print(anthropic.__version__)')"
           # Runs evaluator against all cases, writes evals/results/latest.json,
           # exits non-zero if pass rate < THRESHOLD.
-          python scripts/run_eval_ci.py \
+          $AGENT_PYTHON scripts/run_eval_ci.py \
             --backend anthropic \
             --threshold 0.80 \
             --output evals/results/latest.json
