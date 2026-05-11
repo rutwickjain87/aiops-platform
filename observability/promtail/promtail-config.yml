@@ -10,8 +10,8 @@
 #
 # HOW TO GENERATE LOG FILES
 # ──────────────────────────
-#   make run-bot          # runs bot and tees stdout → logs/slack-incident-bot.log
-#   make run-reviewer     # runs reviewer → logs/pr-reviewer.log
+#   make run-slack-bot          # runs bot and tees stdout → logs/slack-incident-bot.log
+#   make run-pr-reviewer     # runs reviewer → logs/pr-reviewer.log
 #
 # LOKI LABELS ADDED
 # ─────────────────

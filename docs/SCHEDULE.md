@@ -564,7 +564,7 @@ EXP=~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/experi
 - ✅ `tracing.py` — LangSmith layer: `wrap_anthropic()` + `@ls_traceable` on `handle_alert`
 - ✅ `metrics.py` — Prometheus layer: Counter/Histogram for requests, duration, tokens, iterations
 - ✅ `bot.py` — starts `start_metrics_server()` at startup; metrics on `http://localhost:8000/metrics`
-- 🔲 Run `make setup-bot` to install `prometheus-client` (now in `requirements.txt`)
+- 🔲 Run `make setup-slack-bot` to install `prometheus-client` (now in `requirements.txt`)
 - 🔲 Set `METRICS_ENABLED=true` and `METRICS_PORT=8000` in `.env`
 - 🔲 Fire a test alert and verify metrics: `python bot.py --trigger ALERT-001`
 - 🔲 `curl http://localhost:8000/metrics | grep incident_bot` — confirm 4 metric families
@@ -573,7 +573,7 @@ EXP=~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/experi
 
 ✅ **Progress check:**
 
-- [ ] `make test-bot` passes (34 tests: 23 original + 11 metrics tests)
+- [ ] `make test-slack-bot` passes (34 tests: 23 original + 11 metrics tests)
 - [ ] Bot starts and logs `Prometheus metrics available at http://localhost:8000/metrics`
 - [ ] `curl http://localhost:8000/metrics | grep incident_bot` returns all 4 metric families:
   - `incident_bot_requests_total`

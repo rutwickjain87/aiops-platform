@@ -12,6 +12,9 @@ PyGithub>=2.3.0
 # SAST engine (semgrep CLI is invoked via subprocess — this installs the CLI)
 semgrep>=1.70.0
 
+# Environment
+python-dotenv>=1.0.0       # loads .env file into os.environ at startup
+
 # Observability
 langsmith>=0.1.77          # LangSmith tracing (auto-traces LangChain calls)
 prometheus-client>=0.20.0  # Prometheus metrics endpoint

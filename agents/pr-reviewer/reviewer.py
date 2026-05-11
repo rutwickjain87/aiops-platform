@@ -37,9 +37,17 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from the agent directory (agents/pr-reviewer/.env) before any
+# os.environ lookups so GITHUB_TOKEN, ANTHROPIC_API_KEY etc. are available.
+load_dotenv(Path(__file__).parent / ".env")
 
 from anthropic import RateLimitError
 
+from metrics import start_metrics_server
 from planner import PRReviewerPlanner, ReviewerConfig
 
 
@@ -113,6 +121,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    if os.environ.get("METRICS_ENABLED", "true").lower() != "false":
+        start_metrics_server()
+
     cfg = ReviewerConfig(
         model=args.model,
         verbose=not args.quiet,
@@ -149,6 +160,12 @@ def main() -> None:
     print("=" * 60)
     print(review)
     print("=" * 60 + "\n")
+
+    hold = int(os.environ.get("METRICS_HOLD_SECONDS", "0"))
+    if hold > 0:
+        import time
+        print(f"[metrics] holding /metrics on :8001 for {hold}s so Prometheus can scrape", flush=True)
+        time.sleep(hold)
 
 
 if __name__ == "__main__":

@@ -18,8 +18,8 @@
 # Agents must write JSON logs to the logs/ directory at the repo root.
 # Use the make targets that handle redirection automatically:
 #
-#   make run-bot         # starts bot, streams JSON logs to logs/slack-incident-bot.log
-#   make run-reviewer    # starts reviewer, streams to logs/pr-reviewer.log
+#   make run-slack-bot         # starts bot, streams JSON logs to logs/slack-incident-bot.log
+#   make run-pr-reviewer    # starts reviewer, streams to logs/pr-reviewer.log
 #
 # Prometheus scrapes agents on the HOST via host.docker.internal (macOS/Docker Desktop).
 # If you're on Linux, replace host.docker.internal with host-gateway or your host IP.
@@ -108,9 +108,8 @@ services:
       - GF_ANALYTICS_REPORTING_ENABLED=false
       - GF_INSTALL_PLUGINS=grafana-lokiexplore-app
     volumes:
+      # provisioning/ already contains dashboards/aiops-dashboard.json — no separate file mount needed
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      # Auto-provision our dashboard JSON on startup
-      - ./grafana-dashboard.json:/etc/grafana/provisioning/dashboards/aiops-dashboard.json:ro
       - grafana-data:/var/lib/grafana
     restart: unless-stopped
     depends_on:

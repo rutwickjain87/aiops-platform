@@ -832,13 +832,23 @@
   "templating": {
     "list": [
       {
-        "current": {},
+        "current": {
+          "selected": true,
+          "text": "Prometheus",
+          "value": "prometheus"
+        },
         "hide": 0,
         "includeAll": false,
         "label": "Prometheus Datasource",
         "multi": false,
         "name": "datasource",
-        "options": [],
+        "options": [
+          {
+            "selected": true,
+            "text": "Prometheus",
+            "value": "prometheus"
+          }
+        ],
         "query": "prometheus",
         "refresh": 1,
         "type": "datasource"

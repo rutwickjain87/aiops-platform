@@ -159,10 +159,10 @@ All common dev tasks are wired into the top-level `Makefile`. Run `make` (or `ma
 |---|---|
 | `make setup` | Bootstrap all agent venvs (run once after clone) |
 | `make setup-log` | Bootstrap `log-intelligence` venv only |
-| `make setup-bot` | Bootstrap `slack-incident-bot` venv only |
+| `make setup-slack-bot` | Bootstrap `slack-incident-bot` venv only |
 | `make test` | Run ALL unit tests across all agents |
 | `make test-log` | Run `log-intelligence` tests only |
-| `make test-bot` | Run `slack-incident-bot` tests only (24 tests) |
+| `make test-slack-bot` | Run `slack-incident-bot` tests only (24 tests) |
 | `make eval` | Run agent eval suite (Anthropic backend, 80% threshold) |
 | `make eval BACKEND=langchain` | Run eval with LangChain backend |
 | `make eval THRESHOLD=1.0` | Run eval requiring 100% pass rate |

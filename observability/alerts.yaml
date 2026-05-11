@@ -53,7 +53,7 @@ groups:
         annotations:
           summary: "Incident bot error rate > 5% for 5 minutes"
           description: |
-            The Slack incident bot is failing {{ printf "%.1f" (mul $value 100) }}% of alerts
+            The Slack incident bot is failing {{ $value | humanizePercentage }} of alerts
             over the last 5 minutes. Check logs for errors.
             Dashboard: http://grafana/d/aiops-agent-observability-v1
 
@@ -124,7 +124,7 @@ groups:
         annotations:
           summary: "PR reviewer error rate > 5% for 5 minutes"
           description: |
-            The PR reviewer is failing {{ printf "%.1f" (mul $value 100) }}% of reviews.
+            The PR reviewer is failing {{ $value | humanizePercentage }} of reviews.
             Check GITHUB_TOKEN validity and Anthropic API quota.
 
       - alert: PRReviewerHighLatency

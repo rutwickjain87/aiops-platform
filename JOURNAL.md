@@ -298,7 +298,7 @@ incident_planner.handle_alert  [chain]
 - `agents/log-intelligence/.venv` (for Day 2 log agent)
 - `agents/slack-incident-bot/.venv` (for Day 5 bot)
 
-Targets added: `setup-log`, `setup-bot`, `test-log`, `test-bot`; guard checks print a helpful message and exit 1 if the venv binary is missing rather than a cryptic `No such file` from make.
+Targets added: `setup-log`, `setup-slack-bot`, `test-log`, `test-slack-bot`; guard checks print a helpful message and exit 1 if the venv binary is missing rather than a cryptic `No such file` from make.
 
 **Prometheus Metrics Layer** — `metrics.py` provides a Prometheus observability layer on top of LangSmith tracing:
 - Four metric families: `incident_bot_requests_total{status}` (Counter), `incident_bot_duration_seconds` (Histogram), `incident_bot_tokens_total{direction}` (Counter), `incident_bot_iterations_total` (Histogram)
@@ -330,7 +330,7 @@ The old names still work as a fallback, but the LangSmith UI now shows the new n
 
 **Decorator factories must handle both bare and parametrised usage.** `@ls_traceable` (no parens) passes the function as the first argument; `@ls_traceable(name="...")` must return a decorator. The pattern `if fn is not None: return decorator(fn)` handles both cases without requiring two separate functions.
 
-**Sandbox-built venvs are never portable.** Python shebang lines in `.venv/bin/python` are absolute paths baked at creation time. A venv created inside the sandbox (`/sessions/vigilant-lucid-darwin/...`) will not work on the Mac. Always delete any sandbox-created venv and recreate it locally with `make setup-bot`.
+**Sandbox-built venvs are never portable.** Python shebang lines in `.venv/bin/python` are absolute paths baked at creation time. A venv created inside the sandbox (`/sessions/vigilant-lucid-darwin/...`) will not work on the Mac. Always delete any sandbox-created venv and recreate it locally with `make setup-slack-bot`.
 
 **`uv pip install --python <path>` keeps multi-agent deps isolated.** Using `uv pip install -r requirements.txt --python .venv/bin/python` inside each agent directory installs deps into that agent's venv without activating it globally — safe to run from the repo root Makefile without directory-change side effects.
 
@@ -368,10 +368,10 @@ The chain span captures total latency and I/O; the nested LLM runs capture per-t
 
 | Bug | Root Cause | Fix |
 |-----|-----------|-----|
-| `zsh: command not found: pytest` | System Python used, bot venv not activated | Activate venv: `source agents/slack-incident-bot/.venv/bin/activate` or use `make test-bot` |
-| `bad interpreter: /sessions/vigilant-lucid-darwin/...` | Venv created in sandbox with sandbox-specific shebang | `rm -rf agents/slack-incident-bot/.venv && make setup-bot` on local Mac |
-| `zsh: no such file or directory: .venv/bin/pytest` | `pytest` not in `requirements.txt`; venv never created locally | Added `pytest>=8.0` + `pytest-cov>=5.0` to `requirements.txt`; run `make setup-bot` |
-| `make test` fails on `test-log` (no log venv) | `test` depends on both `test-log` and `test-bot`; log venv not built | Added guard: if `$(LOG_PYTEST)` doesn't exist, print message and `exit 1` |
+| `zsh: command not found: pytest` | System Python used, bot venv not activated | Activate venv: `source agents/slack-incident-bot/.venv/bin/activate` or use `make test-slack-bot` |
+| `bad interpreter: /sessions/vigilant-lucid-darwin/...` | Venv created in sandbox with sandbox-specific shebang | `rm -rf agents/slack-incident-bot/.venv && make setup-slack-bot` on local Mac |
+| `zsh: no such file or directory: .venv/bin/pytest` | `pytest` not in `requirements.txt`; venv never created locally | Added `pytest>=8.0` + `pytest-cov>=5.0` to `requirements.txt`; run `make setup-slack-bot` |
+| `make test` fails on `test-log` (no log venv) | `test` depends on both `test-log` and `test-slack-bot`; log venv not built | Added guard: if `$(LOG_PYTEST)` doesn't exist, print message and `exit 1` |
 | LangSmith "Waiting for traces..." | `.env` used old `LANGCHAIN_TRACING_V2` / `LANGCHAIN_API_KEY` names; LangSmith SDK now expects `LANGSMITH_*` | Updated `tracing.py` to check both; updated `.env` to use new canonical names |
 | `export VAR="value"` in `.env` | Shell syntax in dotenv file; `python-dotenv` requires `KEY=value` | Rewrote `.env` to plain `KEY=value` format; removed all `export` prefixes |
 
@@ -421,17 +421,17 @@ The chain span captures total latency and I/O; the nested LLM runs capture per-t
 **Tests & Tooling**
 - `tests/test_slack_bot.py` ✅ 34/34 tests; no `importlib.reload()` calls
 - `tests/test_pr_reviewer.py` ✅ 26/26 tests; pr-reviewer modules loaded via `spec_from_file_location` to avoid `sys.modules` collision; `_pr_metrics_cache` prevents duplicate Prometheus registration
-- `Makefile` ✅ `obs-up`, `obs-down`, `obs-logs`, `run-bot`, `run-reviewer` targets added; `ALERT_ID`, `PR_REPO`, `PR_NUMBER` vars
+- `Makefile` ✅ `obs-up`, `obs-down`, `obs-logs`, `run-slack-bot`, `run-pr-reviewer` targets added; `ALERT_ID`, `PR_REPO`, `PR_NUMBER` vars
 
 ---
 
 ### Key Concepts Learned (Full Observability Stack)
 
-**Loki + Promtail + structured JSON logs form a complete log pipeline.** Agents write to stdout; `make run-bot` uses `tee` to mirror stdout to `logs/slack-incident-bot.log`. Promtail tails that file, parses JSON fields (`level`, `logger`, `correlation_id`), promotes `level` and `logger` to Loki stream labels, and drops DEBUG lines before shipping to Loki. Grafana's LogQL then filters by `{agent="slack-incident-bot", level="ERROR"}` — sub-millisecond at query time because Loki indexed those labels at ingest.
+**Loki + Promtail + structured JSON logs form a complete log pipeline.** Agents write to stdout; `make run-slack-bot` uses `tee` to mirror stdout to `logs/slack-incident-bot.log`. Promtail tails that file, parses JSON fields (`level`, `logger`, `correlation_id`), promotes `level` and `logger` to Loki stream labels, and drops DEBUG lines before shipping to Loki. Grafana's LogQL then filters by `{agent="slack-incident-bot", level="ERROR"}` — sub-millisecond at query time because Loki indexed those labels at ingest.
 
 **`correlation_id` via `contextvars.ContextVar` is the glue.** Each `handle_alert()` / `run()` call generates a UUID, stores it in a `ContextVar`, and every log record picks it up via a `logging.Filter`. The same ID flows through LangSmith's span tree and appears in Loki's log panel — click a Loki log line, extract `correlation_id`, cross-reference in LangSmith.
 
-**`host.docker.internal` is the macOS Docker escape hatch.** Containers can't reach `localhost` of the host; `host.docker.internal` resolves to the host machine's IP from inside any Docker container on macOS/Windows. Prometheus scrapes `host.docker.internal:8000` and `:8001` so agents running via `make run-bot` are visible to the in-container Prometheus without Docker networking changes.
+**`host.docker.internal` is the macOS Docker escape hatch.** Containers can't reach `localhost` of the host; `host.docker.internal` resolves to the host machine's IP from inside any Docker container on macOS/Windows. Prometheus scrapes `host.docker.internal:8000` and `:8001` so agents running via `make run-slack-bot` are visible to the in-container Prometheus without Docker networking changes.
 
 **`sys.modules` collision in a monorepo test suite.** When two agents share file names (`tools.py`, `metrics.py`), a single pytest session will cache the first one loaded under the bare module name. The second agent's tests then import the wrong code silently. Fix: load all modules from the secondary agent via `importlib.util.spec_from_file_location("unique_name", /absolute/path)` — the module is registered under the unique name, never polluting the shared namespace.
 
@@ -449,10 +449,10 @@ make obs-up
 # Loki      → http://localhost:3100
 
 # 2. Run Slack Incident Bot (metrics on :8000, logs → logs/slack-incident-bot.log)
-make run-bot ALERT_ID=ALERT-001
+make run-slack-bot ALERT_ID=ALERT-001
 
 # 3. Run PR Reviewer (metrics on :8001, logs → logs/pr-reviewer.log)
-make run-reviewer PR_REPO=owner/repo PR_NUMBER=42
+make run-pr-reviewer PR_REPO=owner/repo PR_NUMBER=42
 
 # 4. Verify Prometheus scraping
 curl -s http://localhost:8000/metrics | grep incident_bot
@@ -498,8 +498,77 @@ git commit -m "feat(observability): structured logging + Prometheus + Loki + Gra
 - Grafana: 16-panel dashboard auto-provisioned (14 metric + 2 Loki log panels)
 - Prometheus alerts: 8 rules across both agents
 - Tests: 60/60 passing; sys.modules isolation via spec_from_file_location
-- Makefile: obs-up, obs-down, run-bot, run-reviewer targets"
+- Makefile: obs-up, obs-down, run-slack-bot, run-pr-reviewer targets"
 git push
 ```
 
 **Next:** Day 6
+
+---
+
+## Post-Day 5 — Observability Stack Cleanup & Hardening
+
+**Date:** 2026-05-12
+**Theme:** Cleaning up stale references, fixing runtime bugs, and tightening the observability stack before Day 6
+
+---
+
+### What Was Fixed
+
+**Makefile target renaming (clarity pass)**
+
+All "bot" references renamed to be agent-specific. Old names (`setup-bot`, `test-bot`, `run-bot`, `run-reviewer`) were ambiguous once a second agent (pr-reviewer) joined the platform. New names:
+
+| Old | New |
+|-----|-----|
+| `make setup-bot` | `make setup-slack-bot` |
+| `make test-bot` | `make test-slack-bot` |
+| `make run-bot` | `make run-slack-bot` |
+| `make run-reviewer` | `make run-pr-reviewer` |
+
+Added `make setup-pr-reviewer` — the old `run-reviewer` target was using `$(BOT_VENV)/bin/python` (the Slack bot venv) to run the PR reviewer. This is a latent bug: if pr-reviewer has a dep not in the bot venv, it silently uses the wrong Python. Fixed to use `$(PR_PYTHON_ABS)` pointing at `agents/pr-reviewer/.venv/bin/python`.
+
+All references updated in: `SCHEDULE.md`, `SETUP.md`, `README.md`, `JOURNAL.md`, `promtail-config.yml`, `docker-compose.yml` comments.
+
+**`agents/pr-reviewer/reviewer.py` hardening**
+
+Two gaps in the reviewer entrypoint:
+1. `load_dotenv()` was not called — `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, etc. had to be in the shell environment; loading from `.env` wasn't supported at startup.
+2. `start_metrics_server()` was never called — running `reviewer.py` directly (vs. `make run-pr-reviewer`) never started the Prometheus endpoint even when `METRICS_ENABLED=true`.
+
+Both fixed. Added `METRICS_HOLD_SECONDS` env var: when set > 0, the process sleeps after review completion so Prometheus has time to scrape before the process exits (useful for one-shot CI runs).
+
+**`agents/slack-incident-bot/requirements.txt`**
+
+`python-json-logger` was used by `observability/logging.py` but missing from the bot's requirements. Added it.
+
+**Grafana dashboard path consolidation**
+
+The old `docker-compose.yml` mounted two separate volumes into Grafana provisioning:
+```yaml
+- ./grafana/provisioning:/etc/grafana/provisioning:ro
+- ./grafana-dashboard.json:/etc/grafana/provisioning/dashboards/aiops-dashboard.json:ro
+```
+This double-mounts the `dashboards/` subdirectory — Grafana sees the directory from the first mount and the file injected by the second. Potential for confusion.
+
+Fixed: moved `grafana-dashboard.json` → `grafana/provisioning/dashboards/aiops-dashboard.json` so it lives inside the provisioning tree, and removed the redundant second volume mount. Now a single `./grafana/provisioning:/etc/grafana/provisioning:ro` covers everything. Deleted the old root-level `grafana-dashboard.json`.
+
+**`observability/alerts.yaml` — Prometheus template syntax**
+
+Two alert annotations used `{{ printf "%.1f" (mul $value 100) }}%` to format a percentage. This is fragile — `mul` is not a guaranteed Prometheus template function in all versions. Fixed to use the built-in `humanizePercentage` function which handles formatting correctly and is supported from Prometheus 2.26+.
+
+**`observability/loki/loki-config.yml` — compactor `delete_request_store`**
+
+Loki v3 with `retention_enabled: true` requires `delete_request_store` to be explicitly set when not using object storage. Without it, the compactor logs a warning and may not apply retention correctly. Added `delete_request_store: filesystem`.
+
+---
+
+### Misses & What Could Be Better
+
+**`_burst_with_socket.py` reveals a process-coupling problem.** The Slack bot uses an in-process `INCIDENT_STORE` dict to track live incidents (for Slack interactive button callbacks). Firing alerts from a separate process (e.g., `make run-slack-bot` spawning a subprocess) creates a second `INCIDENT_STORE` instance that the Socket Mode handler can't see — button clicks (acknowledge, escalate, dismiss) then silently fail. The `_burst_with_socket.py` debug driver was created as a workaround: it fires alerts in a background thread *within the same process* that owns both the store and the Socket Mode handler. This is a valid local-dev workaround but not committed — it's a local-only file and the underlying architecture issue (in-memory shared state that doesn't survive process boundaries) would need Redis or a message queue for production.
+
+**The `run-pr-reviewer` wrong-venv bug was silent.** Using `python` (system Python or wrong venv) instead of the agent's venv Python produces a `ModuleNotFoundError` at runtime, not at make target definition time. The fix (using an explicit absolute venv path) is correct, but the lesson is: always use absolute venv paths in Makefile `run-*` targets; shell activation is not reliable across `cd` calls.
+
+**Dashboard panels need real Loki label verification before Day 6.** The `aiops-dashboard.json` has two Loki log panels hardcoded to `{agent="slack-incident-bot"}` and `{agent="pr-reviewer"}`. These labels are only correct if `promtail-config.yml` actually sets `agent` as a static label. The config sets `filename` and `job` labels. This means the Loki log panels in the dashboard currently return no data. Needs a promtail config fix or dashboard label update — deferred to Day 6 when the full stack will be run end-to-end.
+
+---

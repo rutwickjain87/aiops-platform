@@ -32,10 +32,10 @@ All common dev tasks are wired into the top-level `Makefile`. Run `make` (bare) 
 |---|---|
 | `make setup` | Bootstrap ALL agent venvs (run once after clone) |
 | `make setup-log` | Bootstrap `log-intelligence` venv only |
-| `make setup-bot` | Bootstrap `slack-incident-bot` venv only |
+| `make setup-slack-bot` | Bootstrap `slack-incident-bot` venv only |
 | `make test` | Run all unit tests (all agents) |
 | `make test-log` | Run `log-intelligence` tests only |
-| `make test-bot` | Run `slack-incident-bot` tests only (34 tests) |
+| `make test-slack-bot` | Run `slack-incident-bot` tests only (34 tests) |
 | `make eval` | Run agent eval suite (Anthropic backend, 80% threshold) |
 | `make eval BACKEND=langchain` | Run eval with LangChain backend |
 | `make eval THRESHOLD=1.0` | Require 100% pass rate |
@@ -411,12 +411,12 @@ uv pip install pygithub langchain langchain-anthropic
 All bot dependencies — including `prometheus-client` — are installed with one command from the repo root:
 
 ```bash
-make setup-bot
+make setup-slack-bot
 ```
 
 This creates `agents/slack-incident-bot/.venv` and installs: `slack-bolt`, `slack-sdk`, `anthropic`, `pydantic`, `python-dotenv`, `langsmith`, `prometheus-client`, `pytest`.
 
-- 🔲 `make setup-bot` completed
+- 🔲 `make setup-slack-bot` completed
 - 🔲 Slack app created at [api.slack.com/apps](https://api.slack.com/apps) (socket mode enabled)
 - 🔲 `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` set in `.env`
 
@@ -437,7 +437,7 @@ LANGSMITH_PROJECT=slack-incident-bot
 
 ### Prometheus metrics
 
-`prometheus-client` is already in `requirements.txt` and installed by `make setup-bot`. No separate install needed.
+`prometheus-client` is already in `requirements.txt` and installed by `make setup-slack-bot`. No separate install needed.
 
 The bot exposes four metrics on `http://localhost:8000/metrics`:
 
@@ -481,10 +481,10 @@ incident_bot_iterations_total_count 1.0
 ### Run tests
 
 ```bash
-make test-bot      # now runs 34 tests (23 original + 11 metrics tests)
+make test-slack-bot      # now runs 34 tests (23 original + 11 metrics tests)
 ```
 
-- 🔲 `make test-bot` passes (34/34)
+- 🔲 `make test-slack-bot` passes (34/34)
 
 ---
 
