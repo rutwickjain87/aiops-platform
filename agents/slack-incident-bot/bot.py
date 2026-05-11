@@ -5,7 +5,7 @@ ARCHITECTURE
 ────────────
                   ┌─────────────────────────────────────────┐
   Prometheus ───▶ │  bot.py trigger_alert(alert_id)         │
-  (simulated)     │                                         │
+  Alertmanager    │                                         │
                   │  IncidentPlanner.handle_alert(alert_id) │
                   │    ├─ get_alert_context                 │
                   │    └─ post_incident_card ──────────────▶│ Slack #incidents
@@ -15,14 +15,28 @@ ARCHITECTURE
                   │    ├─ escalate_incident                 │
                   │    └─ dismiss_incident                  │
                   └─────────────────────────────────────────┘
+                          │
+                          ▼
+              http://localhost:8000/metrics   ← Prometheus scrapes here
+              (incident_bot_requests_total, duration, tokens, iterations)
 
 RUNNING LOCALLY
 ───────────────
-1. Copy .env.example to .env and fill in the three Slack tokens + Anthropic key
-2. uv venv .venv && uv pip install -r requirements.txt
-3. source .venv/bin/activate
-4. python bot.py                      # starts Socket Mode listener
+1. Copy .env.example → .env; fill in Slack tokens, Anthropic key, LangSmith keys
+2. make setup-bot                     # create venv + install deps
+3. cd agents/slack-incident-bot
+4. python bot.py                      # starts Socket Mode listener + metrics server
 5. python bot.py --trigger ALERT-001  # fire a test alert immediately + listen
+
+METRICS
+───────
+The bot exposes Prometheus metrics on /metrics (default port 8000):
+
+    curl http://localhost:8000/metrics | grep incident_bot
+
+Control via env vars:
+    METRICS_ENABLED=true    # set to "false" to disable (default: true)
+    METRICS_PORT=8000       # TCP port for /metrics endpoint
 
 TRIGGERING ALERTS PROGRAMMATICALLY
 ────────────────────────────────────
@@ -45,6 +59,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 import handlers
 from handlers import INCIDENT_STORE
+from metrics import start_metrics_server
 from planner import IncidentPlanner
 
 load_dotenv()
@@ -128,6 +143,9 @@ def main() -> None:
         help="Fire this alert immediately on startup (e.g. ALERT-001), then keep listening.",
     )
     args = parser.parse_args()
+
+    # Start Prometheus metrics server before anything else
+    start_metrics_server()
 
     if args.trigger:
         trigger_alert(args.trigger)

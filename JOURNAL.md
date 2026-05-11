@@ -300,10 +300,18 @@ incident_planner.handle_alert  [chain]
 
 Targets added: `setup-log`, `setup-bot`, `test-log`, `test-bot`; guard checks print a helpful message and exit 1 if the venv binary is missing rather than a cryptic `No such file` from make.
 
-**Bot test suite** — 24 unit tests in `tests/test_slack_bot.py`:
+**Prometheus Metrics Layer** — `metrics.py` provides a Prometheus observability layer on top of LangSmith tracing:
+- Four metric families: `incident_bot_requests_total{status}` (Counter), `incident_bot_duration_seconds` (Histogram), `incident_bot_tokens_total{direction}` (Counter), `incident_bot_iterations_total` (Histogram)
+- `start_metrics_server()` launches a background HTTP server; `curl http://localhost:8000/metrics` returns the Prometheus text format
+- Graceful degradation: importable and no-op when `prometheus_client` is absent; duplicate registration (`ValueError`) handled via `try/except` so module reloads in test suites never crash
+- `planner.py` instrumented with `try/except/finally` — `record_duration()` fires in `finally` (always), `record_request("success/error")` on outcome, `record_tokens()` per LLM turn, `record_iterations()` on completion
+- `bot.py` calls `start_metrics_server()` at startup before Socket Mode starts
+
+**Bot test suite** — 34 unit tests in `tests/test_slack_bot.py`:
 - Planner logic: ReAct loop, tool dispatch, `post_incident_card` extraction from tool result
 - Tools: alert lookup, incident card Slack API call mocking, idempotent update
-- Graceful degradation: all tests pass with `langsmith` installed or absent
+- Metrics: 11 tests covering import, env-gate, all `record_*` helpers as no-ops, server disabled mode, planner integration via `monkeypatch`
+- Graceful degradation: all tests pass with `langsmith` and `prometheus_client` installed or absent
 
 ---
 
@@ -369,40 +377,58 @@ The chain span captures total latency and I/O; the nested LLM runs capture per-t
 
 ---
 
+### Key Concepts Learned (Prometheus addition)
+
+**`prometheus_client` duplicate registration is test-suite poison.** When a module is `importlib.reload()`-ed in a test, metric constructors run again on the same `REGISTRY`. `prometheus_client` raises `ValueError: Duplicated timeseries`. Fix: wrap `_make_metrics()` in `try/except ValueError` and return `{}` — `record_*()` helpers then become no-ops for that process lifetime, which is acceptable in tests. Never call `importlib.reload()` on the metrics module in tests; `metrics_enabled()` reads `os.environ` at call-time so `monkeypatch.setenv()` is sufficient.
+
+**Two independent observability layers complement each other.** LangSmith (`LANGSMITH_TRACING=true`) gives per-trace trees with full prompt/completion content for debugging individual incidents. Prometheus (`METRICS_ENABLED=true`) gives aggregate counters/histograms for dashboards and alerting on throughput, latency, and token burn rate. Use LangSmith to diagnose a bad trace; use Prometheus to know that 5% of traces are failing.
+
+**`try/except/finally` is the right pattern for metrics around a loop.** The `finally` block guarantees `record_duration()` fires even when the ReAct loop raises an unhandled exception — you never silently lose a latency observation. `record_request("error")` in the `except` branch and `record_request("success")` inside the loop's `end_turn` branch mean every alert is counted exactly once.
+
+---
+
 ### Current Status
 
+- `agents/slack-incident-bot/metrics.py` ✅ Prometheus layer with graceful degradation + duplicate-registration safety
 - `agents/slack-incident-bot/tracing.py` ✅ LangSmith integration with graceful fallback
-- `agents/slack-incident-bot/planner.py` ✅ `@ls_traceable` + `init_tracing_client` wired in
-- `agents/slack-incident-bot/requirements.txt` ✅ `langsmith>=0.1.77` added
-- `agents/slack-incident-bot/.env.example` ✅ updated to `LANGSMITH_*` variable names
+- `agents/slack-incident-bot/planner.py` ✅ `@ls_traceable` + `init_tracing_client` + full metrics instrumentation
+- `agents/slack-incident-bot/bot.py` ✅ `start_metrics_server()` called at startup
+- `agents/slack-incident-bot/requirements.txt` ✅ `langsmith>=0.1.77` + `prometheus-client>=0.20.0` added
+- `agents/slack-incident-bot/.env.example` ✅ `LANGSMITH_*` + `METRICS_ENABLED` / `METRICS_PORT` vars
+- `tests/test_slack_bot.py` ✅ 34/34 tests passing; lint clean
 - `Makefile` ✅ multi-venv targets: `setup-bot`, `test-bot`, `setup-log`, `test-log`; `.DEFAULT_GOAL := help`
-- `docs/SETUP.md` ✅ full 11-day install guide — moved from root to `docs/`
-- `docs/SCHEDULE.md` ✅ full 11-day build schedule — moved from root to `docs/`
+- `docs/SETUP.md` ✅ full 11-day install guide — moved from root to `docs/`; Prometheus section complete
+- `docs/SCHEDULE.md` ✅ full 11-day build schedule — moved from root to `docs/`; Day 5 checklist updated
 - `README.md` ✅ Makefile reference section + updated quick-start + links point to `docs/`
 - `CONTRIBUTING.md` ✅ `make setup` / `make lint` / `make fmt` in contributor workflow
 
 **Pending (run locally):**
 ```bash
-# 1. Rebuild bot venv on Mac (sandbox venv won't work)
+# 1. Rebuild bot venv on Mac (includes prometheus-client now)
 make setup-bot
 
-# 2. Run the 24-test suite
+# 2. Run the 34-test suite
 make test-bot
 
-# 3. Test live tracing (ensure .env has LANGSMITH_* keys set)
+# 3. Validate live metrics endpoint
 cd agents/slack-incident-bot
-python app.py --trigger ALERT-001
+python bot.py --trigger ALERT-001
+# In another terminal:
+curl -s http://localhost:8000/metrics | grep incident_bot
 
-# 4. Commit all Day 5 work
-git mv SETUP.md docs/SETUP.md               # move to docs/ (canonical location)
-git mv SCHEDULE.md docs/SCHEDULE.md
-git add agents/slack-incident-bot/tracing.py \
+# 4. Test live tracing (ensure .env has LANGSMITH_* keys set)
+python bot.py --trigger ALERT-002
+
+# 5. Commit all Day 5 work
+git add agents/slack-incident-bot/metrics.py \
         agents/slack-incident-bot/planner.py \
+        agents/slack-incident-bot/bot.py \
         agents/slack-incident-bot/requirements.txt \
         agents/slack-incident-bot/.env.example \
+        tests/test_slack_bot.py \
         docs/SETUP.md docs/SCHEDULE.md Makefile \
         README.md CONTRIBUTING.md JOURNAL.md
-git commit -m "feat(day5): Slack incident bot + LangSmith tracing + Makefile multi-venv"
+git commit -m "feat(day5): Prometheus metrics + LangSmith tracing + Makefile multi-venv"
 git push
 ```
 

@@ -19,15 +19,22 @@ Claude stops (end_turn)
 
 OBSERVABILITY
 ─────────────
-When LANGCHAIN_TRACING_V2=true and LANGCHAIN_API_KEY are set, every run
-is traced to LangSmith:
+Two complementary layers, both optional and independently controlled:
 
-  incident_planner.handle_alert  [chain]
-    ├─ ChatAnthropic [llm]  ← get_alert_context turn
-    └─ ChatAnthropic [llm]  ← post_incident_card turn
+1. LangSmith tracing (LANGSMITH_TRACING=true)
+   Traces every handle_alert() call as a chain span with nested LLM runs:
 
-Set LANGCHAIN_PROJECT to control which LangSmith project receives the
-traces (default: "slack-incident-bot").
+     incident_planner.handle_alert  [chain]
+       ├─ ChatAnthropic [llm]  ← get_alert_context turn
+       └─ ChatAnthropic [llm]  ← post_incident_card turn
+
+2. Prometheus metrics (METRICS_ENABLED=true, default)
+   Exposes four metrics on http://localhost:METRICS_PORT/metrics:
+
+     incident_bot_requests_total{status}        — alert throughput
+     incident_bot_duration_seconds              — end-to-end latency
+     incident_bot_tokens_total{direction}       — token cost proxy
+     incident_bot_iterations_total              — ReAct loop efficiency
 
 Usage
 ─────
@@ -40,11 +47,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any
 
 import anthropic
 
 from memory import Memory, SYSTEM_PROMPT
+from metrics import record_duration, record_iterations, record_request, record_tokens
 from tools import TOOLS, TOOL_FUNCTIONS
 from tracing import init_tracing_client, ls_traceable
 
@@ -98,54 +107,73 @@ class IncidentPlanner:
 
         result: dict[str, Any] = {"incident_id": None, "ts": None, "status": "error"}
         iterations = 0
+        _start = time.monotonic()
 
-        while iterations < MAX_ITERATIONS:
-            iterations += 1
+        try:
+            while iterations < MAX_ITERATIONS:
+                iterations += 1
 
-            response = self._client.messages.create(
-                model=self._config.model,
-                max_tokens=self._config.max_tokens,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
-                messages=self._memory.messages,
-            )
-
-            self._memory.add_assistant(response.content)
-
-            if response.stop_reason == "end_turn":
-                result["status"] = "done"
-                result["iterations"] = iterations
-                return result
-
-            if response.stop_reason != "tool_use":
-                raise RuntimeError(
-                    f"Unexpected stop_reason '{response.stop_reason}' after {iterations} iterations."
+                response = self._client.messages.create(
+                    model=self._config.model,
+                    max_tokens=self._config.max_tokens,
+                    system=SYSTEM_PROMPT,
+                    tools=TOOLS,
+                    messages=self._memory.messages,
                 )
 
-            # Execute all tool calls in this response
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
+                # ── Prometheus: record per-turn token usage ───────────────────
+                if hasattr(response, "usage") and response.usage:
+                    record_tokens(
+                        prompt_tokens=response.usage.input_tokens,
+                        completion_tokens=response.usage.output_tokens,
+                    )
 
-                tool_name = block.name
-                tool_input = block.input
-                tool_use_id = block.id
+                self._memory.add_assistant(response.content)
 
-                tool_result = self._dispatch(tool_name, tool_input)
-                self._memory.add_tool_result(tool_use_id, tool_result)
+                if response.stop_reason == "end_turn":
+                    result["status"] = "done"
+                    result["iterations"] = iterations
+                    record_request("success")
+                    record_iterations(iterations)
+                    return result
 
-                # Extract ts/incident_id from post_incident_card result
-                if tool_name == "post_incident_card":
-                    try:
-                        parsed = json.loads(tool_result)
-                        result["ts"] = parsed.get("ts")
-                        result["incident_id"] = parsed.get("incident_id")
-                    except (json.JSONDecodeError, KeyError):
-                        pass
+                if response.stop_reason != "tool_use":
+                    raise RuntimeError(
+                        f"Unexpected stop_reason '{response.stop_reason}' after {iterations} iterations."
+                    )
 
-        raise RuntimeError(
-            f"Agent exceeded MAX_ITERATIONS ({MAX_ITERATIONS}) for alert {alert_id}."
-        )
+                # Execute all tool calls in this response
+                for block in response.content:
+                    if block.type != "tool_use":
+                        continue
+
+                    tool_name = block.name
+                    tool_input = block.input
+                    tool_use_id = block.id
+
+                    tool_result = self._dispatch(tool_name, tool_input)
+                    self._memory.add_tool_result(tool_use_id, tool_result)
+
+                    # Extract ts/incident_id from post_incident_card result
+                    if tool_name == "post_incident_card":
+                        try:
+                            parsed = json.loads(tool_result)
+                            result["ts"] = parsed.get("ts")
+                            result["incident_id"] = parsed.get("incident_id")
+                        except (json.JSONDecodeError, KeyError):
+                            pass
+
+            raise RuntimeError(
+                f"Agent exceeded MAX_ITERATIONS ({MAX_ITERATIONS}) for alert {alert_id}."
+            )
+
+        except Exception:
+            record_request("error")
+            raise
+
+        finally:
+            # ── Prometheus: record total wall-clock duration ───────────────────
+            record_duration(time.monotonic() - _start)
 
     def _dispatch(self, tool_name: str, tool_input: dict) -> str:
         """Route a tool call to the matching function, injecting the Slack client where needed."""

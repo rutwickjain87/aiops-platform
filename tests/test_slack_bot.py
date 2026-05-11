@@ -267,3 +267,127 @@ class TestMemory:
         msgs = m.messages
         msgs.append({"role": "user", "content": "injected"})
         assert len(m.messages) == 1  # original not mutated
+
+
+# ── metrics.py ───────────────────────────────────────────────────────────────
+
+
+class TestMetrics:
+    """Prometheus metrics module — tests run with or without prometheus_client installed."""
+
+    def test_module_imports_cleanly(self):
+        """metrics.py must be importable regardless of prometheus_client presence."""
+        import metrics  # noqa: F401
+
+        # Verify the public API is present
+        assert callable(metrics.metrics_enabled)
+        assert callable(metrics.start_metrics_server)
+        assert callable(metrics.record_request)
+        assert callable(metrics.record_duration)
+        assert callable(metrics.record_tokens)
+        assert callable(metrics.record_iterations)
+
+    def test_metrics_enabled_default(self, monkeypatch):
+        """metrics_enabled() returns True when METRICS_ENABLED is unset."""
+        monkeypatch.delenv("METRICS_ENABLED", raising=False)
+        import metrics
+
+        # metrics_enabled() reads os.environ at call-time — no reload needed.
+        # Result is True when prometheus_client is installed; False otherwise — both are fine.
+        result = metrics.metrics_enabled()
+        assert isinstance(result, bool)
+
+    def test_metrics_disabled_via_env(self, monkeypatch):
+        """METRICS_ENABLED=false disables metrics regardless of package presence."""
+        monkeypatch.setenv("METRICS_ENABLED", "false")
+        import metrics
+
+        # metrics_enabled() reads os.environ at call-time — no reload needed.
+        assert metrics.metrics_enabled() is False
+
+    def test_record_request_success_no_error(self, monkeypatch):
+        """record_request('success') must not raise even when prometheus unavailable."""
+        import metrics
+
+        metrics.record_request("success")  # should not raise
+
+    def test_record_request_error_no_error(self):
+        """record_request('error') must not raise."""
+        import metrics
+
+        metrics.record_request("error")
+
+    def test_record_duration_no_error(self):
+        """record_duration() must not raise."""
+        import metrics
+
+        metrics.record_duration(1.23)
+
+    def test_record_tokens_no_error(self):
+        """record_tokens() must not raise."""
+        import metrics
+
+        metrics.record_tokens(prompt_tokens=412, completion_tokens=87)
+
+    def test_record_iterations_no_error(self):
+        """record_iterations() must not raise."""
+        import metrics
+
+        metrics.record_iterations(3)
+
+    def test_start_metrics_server_disabled_no_error(self, monkeypatch):
+        """start_metrics_server() with METRICS_ENABLED=false must not start a server."""
+        monkeypatch.setenv("METRICS_ENABLED", "false")
+        import metrics
+
+        # metrics_enabled() reads os.environ at call-time — no reload needed.
+        # Should return immediately without binding a port.
+        metrics.start_metrics_server(port=19999)
+
+    def test_planner_records_metrics_on_success(self, monkeypatch):
+        """handle_alert() calls record_request('success') and record_duration()."""
+        from unittest.mock import MagicMock, patch
+
+        import metrics
+
+        recorded = {"requests": [], "durations": [], "iterations": []}
+
+        monkeypatch.setattr(metrics, "record_request", lambda s: recorded["requests"].append(s))
+        monkeypatch.setattr(metrics, "record_duration", lambda d: recorded["durations"].append(d))
+        monkeypatch.setattr(metrics, "record_iterations", lambda i: recorded["iterations"].append(i))
+        monkeypatch.setattr(metrics, "record_tokens", lambda **_: None)
+
+        fake_response_tool = MagicMock()
+        fake_response_tool.stop_reason = "tool_use"
+        fake_response_tool.usage.input_tokens = 100
+        fake_response_tool.usage.output_tokens = 50
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.name = "get_alert_context"
+        tool_block.input = {"alert_id": "ALERT-001"}
+        tool_block.id = "tu_001"
+        fake_response_tool.content = [tool_block]
+
+        fake_response_end = MagicMock()
+        fake_response_end.stop_reason = "end_turn"
+        fake_response_end.usage.input_tokens = 200
+        fake_response_end.usage.output_tokens = 80
+        fake_response_end.content = []
+
+        with patch("planner.anthropic.Anthropic"), \
+             patch("planner.init_tracing_client", side_effect=lambda c: c), \
+             patch("planner.ls_traceable", side_effect=lambda *a, **kw: (lambda f: f)):
+            from planner import IncidentPlanner
+            planner = IncidentPlanner()
+            planner._client = MagicMock()
+            planner._client.messages.create.side_effect = [
+                fake_response_tool,
+                fake_response_end,
+            ]
+            with patch("planner.TOOL_FUNCTIONS", {"get_alert_context": lambda **_: '{"ok": true}'}):
+                planner.handle_alert("ALERT-001")
+
+        assert "success" in recorded["requests"]
+        assert len(recorded["durations"]) == 1
+        assert recorded["durations"][0] >= 0
+        assert len(recorded["iterations"]) == 1

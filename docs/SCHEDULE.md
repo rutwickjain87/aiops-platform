@@ -553,30 +553,42 @@ EXP=~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/experi
 
 ## Day 5 — Slack Incident Bot + Observability Layer
 
-🎯 **Goal:** Slack reaction (`:rotating_light:`) opens an incident channel within 30s. LangSmith traces are flowing. One Prometheus metric per agent is exposed.
+🎯 **Goal:** Bot receives an alert, posts a Block Kit incident card to Slack within 30s. LangSmith traces are flowing. Four Prometheus metrics are exposed on `/metrics`.
 
-📚 **Topic of the day:** Long-running agent processes. Observability for agents — traces, tokens, latency, $/run. Why traces are the highest-leverage habit you'll form this sprint.
+📚 **Topic of the day:** Long-running agent processes. Two-layer observability — LangSmith for trace-level debugging, Prometheus for aggregate metrics and alerting. Why both matter and what each one tells you.
 
 ⚙️ **Tasks:**
 
-- 🔲 In `~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/agents/slack-incident-bot/`: Slack Bolt app (socket mode), LangChain agent
-- 🔲 Handlers: `app_mention` (Q&A) and reaction (`:rotating_light:` → auto-create `#inc-YYYY-MM-DD-NN`)
-- 🔲 Sign up for [LangSmith](https://smith.langchain.com/); set `LANGCHAIN_TRACING_V2=true`
-- 🔲 Wire LangSmith into all 3 agents built so far (log triage, PR reviewer, Slack bot)
-- 🔲 In `~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/observability/`: Prometheus exporter exposing `agent_request_duration_seconds{agent}` and `agent_tokens_total{agent, direction}`
-- 🔲 Read every LangSmith trace from today — note one surprise in `JOURNAL.md`
+- ✅ `agents/slack-incident-bot/` — Slack Bolt app (Socket Mode), Anthropic ReAct agent
+- ✅ `planner.py` — ReAct loop: `get_alert_context` → `post_incident_card` → `end_turn`
+- ✅ `tracing.py` — LangSmith layer: `wrap_anthropic()` + `@ls_traceable` on `handle_alert`
+- ✅ `metrics.py` — Prometheus layer: Counter/Histogram for requests, duration, tokens, iterations
+- ✅ `bot.py` — starts `start_metrics_server()` at startup; metrics on `http://localhost:8000/metrics`
+- 🔲 Run `make setup-bot` to install `prometheus-client` (now in `requirements.txt`)
+- 🔲 Set `METRICS_ENABLED=true` and `METRICS_PORT=8000` in `.env`
+- 🔲 Fire a test alert and verify metrics: `python bot.py --trigger ALERT-001`
+- 🔲 `curl http://localhost:8000/metrics | grep incident_bot` — confirm 4 metric families
+- 🔲 Open LangSmith → project `slack-incident-bot` → confirm trace tree is present
+- 🔲 Read the trace — note one surprise in `JOURNAL.md`
 
 ✅ **Progress check:**
 
-- [ ] Slack reaction opens channel within 30s
-- [ ] LangSmith dashboard shows traces from all 3 agents
-- [ ] `curl localhost:9100/metrics` shows agent metrics
-- [ ] You can articulate one thing the trace revealed that the README didn't mention
+- [ ] `make test-bot` passes (34 tests: 23 original + 11 metrics tests)
+- [ ] Bot starts and logs `Prometheus metrics available at http://localhost:8000/metrics`
+- [ ] `curl http://localhost:8000/metrics | grep incident_bot` returns all 4 metric families:
+  - `incident_bot_requests_total`
+  - `incident_bot_duration_seconds`
+  - `incident_bot_tokens_total`
+  - `incident_bot_iterations_total`
+- [ ] LangSmith shows `incident_planner.handle_alert` chain with 2 nested LLM runs
+- [ ] You can read the token count from LangSmith and cross-check with `incident_bot_tokens_total`
 
 💡 **Helpful tips:**
 
+- **`prometheus_client` starts a background thread** — `start_http_server()` is non-blocking, so it doesn't interfere with the Socket Mode event loop.
+- **Metrics survive across alerts.** The Counter values accumulate for the lifetime of the process — that's intentional. Use `rate()` in PromQL to get per-second rates.
 - **Slack Bolt's socket mode is the fastest local-dev path.** No webhooks, no ngrok.
-- **Add `X-Title` and `HTTP-Referer` headers to OpenRouter calls** — they show up in your OpenRouter dashboard and help correlate cost by agent.
+- **Disable metrics in tests** by setting `METRICS_ENABLED=false` or not setting `METRICS_ENABLED` — the module degrades gracefully and tests pass either way.
 
 ---
 

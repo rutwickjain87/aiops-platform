@@ -35,7 +35,7 @@ All common dev tasks are wired into the top-level `Makefile`. Run `make` (bare) 
 | `make setup-bot` | Bootstrap `slack-incident-bot` venv only |
 | `make test` | Run all unit tests (all agents) |
 | `make test-log` | Run `log-intelligence` tests only |
-| `make test-bot` | Run `slack-incident-bot` tests only (24 tests) |
+| `make test-bot` | Run `slack-incident-bot` tests only (34 tests) |
 | `make eval` | Run agent eval suite (Anthropic backend, 80% threshold) |
 | `make eval BACKEND=langchain` | Run eval with LangChain backend |
 | `make eval THRESHOLD=1.0` | Require 100% pass rate |
@@ -408,13 +408,13 @@ uv pip install pygithub langchain langchain-anthropic
 
 ### Python packages
 
-All bot dependencies are installed with one command from the repo root:
+All bot dependencies — including `prometheus-client` — are installed with one command from the repo root:
 
 ```bash
 make setup-bot
 ```
 
-This creates `agents/slack-incident-bot/.venv` and installs: `slack-bolt`, `slack-sdk`, `anthropic`, `pydantic`, `python-dotenv`, `langsmith`, `pytest`.
+This creates `agents/slack-incident-bot/.venv` and installs: `slack-bolt`, `slack-sdk`, `anthropic`, `pydantic`, `python-dotenv`, `langsmith`, `prometheus-client`, `pytest`.
 
 - 🔲 `make setup-bot` completed
 - 🔲 Slack app created at [api.slack.com/apps](https://api.slack.com/apps) (socket mode enabled)
@@ -435,22 +435,56 @@ LANGSMITH_PROJECT=slack-incident-bot
 - 🔲 LangSmith account created
 - 🔲 `LANGSMITH_API_KEY`, `LANGSMITH_TRACING`, `LANGSMITH_PROJECT` set in `.env`
 
-### Prometheus exporter
+### Prometheus metrics
 
-```bash
-# Install into the log-intelligence venv (shared observability tooling)
-uv pip install prometheus-client --python agents/log-intelligence/.venv/bin/python
+`prometheus-client` is already in `requirements.txt` and installed by `make setup-bot`. No separate install needed.
+
+The bot exposes four metrics on `http://localhost:8000/metrics`:
+
+| Metric | Type | Labels | What it tracks |
+|---|---|---|---|
+| `incident_bot_requests_total` | Counter | `status` (success/error) | Alert throughput |
+| `incident_bot_duration_seconds` | Histogram | — | End-to-end `handle_alert` latency |
+| `incident_bot_tokens_total` | Counter | `direction` (prompt/completion) | LLM token cost |
+| `incident_bot_iterations_total` | Histogram | — | ReAct loop iterations |
+
+Add to `agents/slack-incident-bot/.env`:
+
+```
+METRICS_ENABLED=true
+METRICS_PORT=8000
 ```
 
-- 🔲 `prometheus-client` installed
+**Validation** — after starting the bot, verify metrics are flowing:
+
+```bash
+# In one terminal: start the bot
+cd agents/slack-incident-bot && python bot.py --trigger ALERT-001
+
+# In another terminal: scrape the endpoint
+curl -s http://localhost:8000/metrics | grep incident_bot
+```
+
+Expected output includes:
+```
+incident_bot_requests_total{status="success"} 1.0
+incident_bot_duration_seconds_count 1.0
+incident_bot_tokens_total{direction="prompt"} ...
+incident_bot_tokens_total{direction="completion"} ...
+incident_bot_iterations_total_count 1.0
+```
+
+- 🔲 `METRICS_ENABLED=true` and `METRICS_PORT=8000` set in `.env`
+- 🔲 Bot starts and logs `Prometheus metrics available at http://localhost:8000/metrics`
+- 🔲 `curl http://localhost:8000/metrics | grep incident_bot` returns all 4 metric families
 
 ### Run tests
 
 ```bash
-make test-bot      # runs 24 unit tests; no Slack or Anthropic credentials needed
+make test-bot      # now runs 34 tests (23 original + 11 metrics tests)
 ```
 
-- 🔲 `make test-bot` passes (24/24)
+- 🔲 `make test-bot` passes (34/34)
 
 ---
 
