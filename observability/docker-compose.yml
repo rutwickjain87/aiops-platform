@@ -1,0 +1,131 @@
+---
+# observability/docker-compose.yml
+#
+# Full local observability stack:
+#   Prometheus  → metrics scraping  → http://localhost:9090
+#   Loki        → log aggregation   → http://localhost:3100
+#   Promtail    → log shipping      (tails logs/ directory)
+#   Grafana     → unified dashboard → http://localhost:3000
+#
+# USAGE
+# ─────
+#   make obs-up          # start the stack (detached)
+#   make obs-down        # stop and remove containers
+#   make obs-logs        # tail all container logs
+#
+# AGENT LOG WIRING
+# ────────────────
+# Agents must write JSON logs to the logs/ directory at the repo root.
+# Use the make targets that handle redirection automatically:
+#
+#   make run-bot         # starts bot, streams JSON logs to logs/slack-incident-bot.log
+#   make run-reviewer    # starts reviewer, streams to logs/pr-reviewer.log
+#
+# Prometheus scrapes agents on the HOST via host.docker.internal (macOS/Docker Desktop).
+# If you're on Linux, replace host.docker.internal with host-gateway or your host IP.
+#
+# GRAFANA LOGIN
+# ─────────────
+#   URL:      http://localhost:3000
+#   Username: admin
+#   Password: aiops  (set via GF_SECURITY_ADMIN_PASSWORD below)
+
+name: aiops-observability
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # ── Prometheus ────────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: aiops-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yaml:/etc/prometheus/alerts.yaml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"           # allows POST /-/reload to reload config
+      - "--web.enable-remote-write-receiver"
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - obs
+
+  # ── Loki ─────────────────────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: aiops-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/loki-config.yml
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - obs
+
+  # ── Promtail ─────────────────────────────────────────────────────────────────
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: aiops-promtail
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      # Mount the logs/ directory from the repo root so Promtail can tail it.
+      # Path on host: <repo-root>/logs/
+      # Adjust ../logs if your docker compose up is run from a different directory.
+      - ../logs:/logs:ro
+      - promtail-positions:/tmp
+    command: -config.file=/etc/promtail/config.yml
+    restart: unless-stopped
+    depends_on:
+      - loki
+    logging: *default-logging
+    networks:
+      - obs
+
+  # ── Grafana ───────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: aiops-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=aiops
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_INSTALL_PLUGINS=grafana-lokiexplore-app
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      # Auto-provision our dashboard JSON on startup
+      - ./grafana-dashboard.json:/etc/grafana/provisioning/dashboards/aiops-dashboard.json:ro
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+    logging: *default-logging
+    networks:
+      - obs
+
+volumes:
+  prometheus-data:
+  loki-data:
+  grafana-data:
+  promtail-positions:
+
+networks:
+  obs:
+    driver: bridge

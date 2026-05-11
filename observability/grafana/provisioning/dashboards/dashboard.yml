@@ -1,0 +1,19 @@
+# observability/grafana/provisioning/dashboards/dashboard.yml
+#
+# Tells Grafana where to find dashboard JSON files to auto-provision on startup.
+# The actual dashboard JSON is mounted directly into this directory via docker-compose.
+
+apiVersion: 1
+
+providers:
+  - name: AIOps Platform
+    orgId: 1
+    folder: AIOps
+    folderUid: aiops
+    type: file
+    disableDeletion: true       # prevent accidental deletion from UI
+    updateIntervalSeconds: 30   # reload if file changes on disk
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

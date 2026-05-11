@@ -52,6 +52,8 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 from slack_bolt import App
@@ -64,11 +66,14 @@ from planner import IncidentPlanner
 
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-)
-logger = logging.getLogger("slack-incident-bot")
+# Shared observability library (repo root)
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from observability import get_logger  # noqa: E402
+
+log = get_logger("slack-incident-bot", agent="slack-incident-bot")
+
+# Keep basicConfig for third-party library log lines (slack_bolt, urllib3, etc.)
+logging.basicConfig(level=logging.WARNING)
 
 # ── Bolt app (uses SLACK_BOT_TOKEN from env) ──────────────────────────────────
 
@@ -96,7 +101,7 @@ def trigger_alert(alert_id: str) -> dict:
 
     Returns the planner result dict {incident_id, ts, status, iterations}.
     """
-    logger.info("Triggering alert: %s", alert_id)
+    log.info("trigger_alert called", extra={"alert_id": alert_id})
     result = _planner.handle_alert(alert_id)
     incident_id = result.get("incident_id")
     ts = result.get("ts")
@@ -104,8 +109,9 @@ def trigger_alert(alert_id: str) -> dict:
     if incident_id and ts:
         # Bootstrap INCIDENT_STORE with enough data for button handlers to update the card.
         # In a real system this would be persisted to Redis/DB.
-        from tools import get_alert_context
         import json
+
+        from tools import get_alert_context
 
         raw = json.loads(get_alert_context(alert_id))
         INCIDENT_STORE[incident_id] = {
@@ -118,16 +124,12 @@ def trigger_alert(alert_id: str) -> dict:
             "channel_id": os.environ.get("SLACK_CHANNEL_ID"),
             "status": "open",
         }
-        logger.info(
-            "Incident %s posted (ts=%s) in %d iterations",
-            incident_id,
-            ts,
-            result.get("iterations", -1),
+        log.info(
+            "Incident posted",
+            extra={"incident_id": incident_id, "ts": ts, "iterations": result.get("iterations", -1)},
         )
     else:
-        logger.warning(
-            "Planner did not return incident_id/ts for alert %s: %s", alert_id, result
-        )
+        log.warning("Planner returned no incident_id/ts", extra={"alert_id": alert_id, "result": str(result)})
 
     return result
 
@@ -150,7 +152,7 @@ def main() -> None:
     if args.trigger:
         trigger_alert(args.trigger)
 
-    logger.info("Starting Socket Mode listener…")
+    log.info("Starting Socket Mode listener")
     handler = SocketModeHandler(app, os.environ.get("SLACK_APP_TOKEN"))
     handler.start()
 

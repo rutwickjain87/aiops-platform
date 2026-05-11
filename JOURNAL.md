@@ -387,48 +387,118 @@ The chain span captures total latency and I/O; the nested LLM runs capture per-t
 
 ---
 
-### Current Status
+### Current Status (after Day 5 Prometheus + Observability Stack)
 
+**Slack Incident Bot**
 - `agents/slack-incident-bot/metrics.py` ✅ Prometheus layer with graceful degradation + duplicate-registration safety
 - `agents/slack-incident-bot/tracing.py` ✅ LangSmith integration with graceful fallback
-- `agents/slack-incident-bot/planner.py` ✅ `@ls_traceable` + `init_tracing_client` + full metrics instrumentation
-- `agents/slack-incident-bot/bot.py` ✅ `start_metrics_server()` called at startup
-- `agents/slack-incident-bot/requirements.txt` ✅ `langsmith>=0.1.77` + `prometheus-client>=0.20.0` added
-- `agents/slack-incident-bot/.env.example` ✅ `LANGSMITH_*` + `METRICS_ENABLED` / `METRICS_PORT` vars
-- `tests/test_slack_bot.py` ✅ 34/34 tests passing; lint clean
-- `Makefile` ✅ multi-venv targets: `setup-bot`, `test-bot`, `setup-log`, `test-log`; `.DEFAULT_GOAL := help`
-- `docs/SETUP.md` ✅ full 11-day install guide — moved from root to `docs/`; Prometheus section complete
-- `docs/SCHEDULE.md` ✅ full 11-day build schedule — moved from root to `docs/`; Day 5 checklist updated
-- `README.md` ✅ Makefile reference section + updated quick-start + links point to `docs/`
-- `CONTRIBUTING.md` ✅ `make setup` / `make lint` / `make fmt` in contributor workflow
+- `agents/slack-incident-bot/planner.py` ✅ `@ls_traceable` + structured JSON logging + full metrics instrumentation
+- `agents/slack-incident-bot/bot.py` ✅ `start_metrics_server()` + JSON logger at startup
+- `agents/slack-incident-bot/requirements.txt` ✅ `langsmith`, `prometheus-client`, `python-json-logger` added
 
-**Pending (run locally):**
+**PR Security Reviewer**
+- `agents/pr-reviewer/metrics.py` ✅ 5 Prometheus metric families (requests, duration, tokens, iterations, findings) on port 8001
+- `agents/pr-reviewer/tracing.py` ✅ `@ls_traceable` decorator with bare + parametrised call forms
+- `agents/pr-reviewer/planner.py` ✅ structured logging + metrics + tracing; `_extract_findings()` parses emoji severity from output markdown
+- `agents/pr-reviewer/requirements.txt` ✅ all observability deps added
+- `agents/pr-reviewer/.env.example` ✅ `LANGSMITH_*` + `METRICS_*` + `GITHUB_TOKEN` vars documented
+
+**Shared Observability Package**
+- `observability/__init__.py` ✅ re-exports `get_logger`, `get_correlation_id`, `set_correlation_id`
+- `observability/logging.py` ✅ `ContextVar`-based correlation ID; `python-json-logger` JSON formatter; graceful plaintext fallback
+
+**Docker Observability Stack**
+- `observability/docker-compose.yml` ✅ Prometheus v2.51 + Loki v3.0 + Promtail v3.0 + Grafana v10.4
+- `observability/prometheus.yml` ✅ scrapes `host.docker.internal:8000` (bot) and `:8001` (reviewer)
+- `observability/loki/loki-config.yml` ✅ local filesystem backend, schema v13, 30-day retention
+- `observability/promtail/promtail-config.yml` ✅ tails `logs/*.log`, JSON pipeline, promotes `level`/`logger` as Loki stream labels, drops DEBUG
+- `observability/grafana/provisioning/datasources/datasources.yml` ✅ Prometheus (default) + Loki auto-provisioned
+- `observability/grafana/provisioning/dashboards/dashboard.yml` ✅ AIOps folder provider
+- `observability/grafana-dashboard.json` ✅ 16 panels — 14 Prometheus metric panels + 2 Loki log panels, 2 agent rows
+- `observability/alerts.yaml` ✅ 8 Prometheus alert rules (HighErrorRate, HighLatency, TokenBurnSpike, NoActivity, HighFindingsRate)
+- `logs/.gitkeep` ✅ tracks empty log directory for Promtail
+
+**Tests & Tooling**
+- `tests/test_slack_bot.py` ✅ 34/34 tests; no `importlib.reload()` calls
+- `tests/test_pr_reviewer.py` ✅ 26/26 tests; pr-reviewer modules loaded via `spec_from_file_location` to avoid `sys.modules` collision; `_pr_metrics_cache` prevents duplicate Prometheus registration
+- `Makefile` ✅ `obs-up`, `obs-down`, `obs-logs`, `run-bot`, `run-reviewer` targets added; `ALERT_ID`, `PR_REPO`, `PR_NUMBER` vars
+
+---
+
+### Key Concepts Learned (Full Observability Stack)
+
+**Loki + Promtail + structured JSON logs form a complete log pipeline.** Agents write to stdout; `make run-bot` uses `tee` to mirror stdout to `logs/slack-incident-bot.log`. Promtail tails that file, parses JSON fields (`level`, `logger`, `correlation_id`), promotes `level` and `logger` to Loki stream labels, and drops DEBUG lines before shipping to Loki. Grafana's LogQL then filters by `{agent="slack-incident-bot", level="ERROR"}` — sub-millisecond at query time because Loki indexed those labels at ingest.
+
+**`correlation_id` via `contextvars.ContextVar` is the glue.** Each `handle_alert()` / `run()` call generates a UUID, stores it in a `ContextVar`, and every log record picks it up via a `logging.Filter`. The same ID flows through LangSmith's span tree and appears in Loki's log panel — click a Loki log line, extract `correlation_id`, cross-reference in LangSmith.
+
+**`host.docker.internal` is the macOS Docker escape hatch.** Containers can't reach `localhost` of the host; `host.docker.internal` resolves to the host machine's IP from inside any Docker container on macOS/Windows. Prometheus scrapes `host.docker.internal:8000` and `:8001` so agents running via `make run-bot` are visible to the in-container Prometheus without Docker networking changes.
+
+**`sys.modules` collision in a monorepo test suite.** When two agents share file names (`tools.py`, `metrics.py`), a single pytest session will cache the first one loaded under the bare module name. The second agent's tests then import the wrong code silently. Fix: load all modules from the secondary agent via `importlib.util.spec_from_file_location("unique_name", /absolute/path)` — the module is registered under the unique name, never polluting the shared namespace.
+
+**Grafana auto-provisioning eliminates manual dashboard imports.** Mount datasource YAML + dashboard JSON into `/etc/grafana/provisioning/` and Grafana loads them on startup. `updateIntervalSeconds: 30` means editing the JSON file on disk updates the live dashboard within 30 seconds — no browser interaction needed during development.
+
+---
+
+### Running the Full Stack Locally
+
 ```bash
-# 1. Rebuild bot venv on Mac (includes prometheus-client now)
-make setup-bot
+# 1. Start Docker observability stack (Prometheus + Loki + Grafana)
+make obs-up
+# Grafana   → http://localhost:3000  (admin / aiops)
+# Prometheus → http://localhost:9090
+# Loki      → http://localhost:3100
 
-# 2. Run the 34-test suite
-make test-bot
+# 2. Run Slack Incident Bot (metrics on :8000, logs → logs/slack-incident-bot.log)
+make run-bot ALERT_ID=ALERT-001
 
-# 3. Validate live metrics endpoint
-cd agents/slack-incident-bot
-python bot.py --trigger ALERT-001
-# In another terminal:
+# 3. Run PR Reviewer (metrics on :8001, logs → logs/pr-reviewer.log)
+make run-reviewer PR_REPO=owner/repo PR_NUMBER=42
+
+# 4. Verify Prometheus scraping
 curl -s http://localhost:8000/metrics | grep incident_bot
+curl -s http://localhost:8001/metrics | grep pr_reviewer
 
-# 4. Test live tracing (ensure .env has LANGSMITH_* keys set)
-python bot.py --trigger ALERT-002
+# 5. Check Grafana: AIOps folder → AIOps Agent Observability dashboard
+#    - Metric panels update every 15s
+#    - Loki log panels show structured JSON from both agents
 
-# 5. Commit all Day 5 work
-git add agents/slack-incident-bot/metrics.py \
-        agents/slack-incident-bot/planner.py \
-        agents/slack-incident-bot/bot.py \
-        agents/slack-incident-bot/requirements.txt \
-        agents/slack-incident-bot/.env.example \
-        tests/test_slack_bot.py \
-        docs/SETUP.md docs/SCHEDULE.md Makefile \
-        README.md CONTRIBUTING.md JOURNAL.md
-git commit -m "feat(day5): Prometheus metrics + LangSmith tracing + Makefile multi-venv"
+# 6. Stop the stack
+make obs-down
+```
+
+---
+
+### Git Commit (all observability work)
+
+```bash
+git add \
+  observability/ \
+  agents/slack-incident-bot/planner.py \
+  agents/slack-incident-bot/bot.py \
+  agents/slack-incident-bot/metrics.py \
+  agents/slack-incident-bot/tracing.py \
+  agents/slack-incident-bot/requirements.txt \
+  agents/slack-incident-bot/.env.example \
+  agents/pr-reviewer/metrics.py \
+  agents/pr-reviewer/tracing.py \
+  agents/pr-reviewer/planner.py \
+  agents/pr-reviewer/requirements.txt \
+  agents/pr-reviewer/.env.example \
+  tests/test_slack_bot.py \
+  tests/test_pr_reviewer.py \
+  logs/.gitkeep \
+  Makefile \
+  JOURNAL.md
+git commit -m "feat(observability): structured logging + Prometheus + Loki + Grafana stack across all agents
+
+- observability/ package: JSON structured logging with ContextVar correlation IDs
+- slack-incident-bot: planner + bot wired for JSON logs, Prometheus metrics, LangSmith tracing
+- pr-reviewer: metrics.py (5 families, port 8001), tracing.py, planner instrumented
+- Docker stack: Prometheus + Loki v3 + Promtail + Grafana 10.4 (make obs-up)
+- Grafana: 16-panel dashboard auto-provisioned (14 metric + 2 Loki log panels)
+- Prometheus alerts: 8 rules across both agents
+- Tests: 60/60 passing; sys.modules isolation via spec_from_file_location
+- Makefile: obs-up, obs-down, run-bot, run-reviewer targets"
 git push
 ```
 

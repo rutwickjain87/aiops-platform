@@ -1,0 +1,62 @@
+# observability/prometheus.yml
+#
+# Prometheus scrape configuration for the AIOps platform.
+#
+# Agents run on the HOST machine; Prometheus runs in Docker.
+# On macOS with Docker Desktop, host.docker.internal resolves to the host.
+# On Linux, use host-gateway or your machine's LAN IP instead.
+#
+# Agent metrics ports:
+#   slack-incident-bot  → localhost:8000  (METRICS_PORT=8000)
+#   pr-reviewer         → localhost:8001  (METRICS_PORT=8001)
+
+global:
+  scrape_interval: 15s          # how often to pull metrics
+  evaluation_interval: 15s      # how often to evaluate alerting rules
+  scrape_timeout: 10s
+
+# Load our alerting rules
+rule_files:
+  - /etc/prometheus/alerts.yaml
+
+# Alertmanager (optional — uncomment if you set up Alertmanager)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
+
+scrape_configs:
+
+  # ── Prometheus self-monitoring ───────────────────────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # ── Slack Incident Bot ───────────────────────────────────────────────────────
+  - job_name: slack-incident-bot
+    static_configs:
+      - targets: ['host.docker.internal:8000']
+        labels:
+          agent: slack-incident-bot
+          env: local
+    metrics_path: /metrics
+    scrape_interval: 15s
+    # Relabel to add a human-readable instance label
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: slack-incident-bot
+
+  # ── PR Security Reviewer ─────────────────────────────────────────────────────
+  - job_name: pr-reviewer
+    static_configs:
+      - targets: ['host.docker.internal:8001']
+        labels:
+          agent: pr-reviewer
+          env: local
+    metrics_path: /metrics
+    scrape_interval: 15s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: pr-reviewer

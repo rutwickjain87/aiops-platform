@@ -42,8 +42,11 @@ REQUIREMENTS
 
 from __future__ import annotations
 
-import json
+import sys
+import time
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import (
@@ -52,7 +55,16 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+
+from metrics import record_duration, record_findings, record_iterations, record_request, record_tokens
 from tools import TOOL_MAP, TOOLS
+from tracing import ls_traceable
+
+# Make the shared observability package importable from the repo root
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from observability import get_logger, set_correlation_id  # noqa: E402
+
+log = get_logger(__name__, agent="pr-reviewer")
 
 # ── System prompt ──────────────────────────────────────────────────────────────
 
@@ -160,8 +172,13 @@ class PRReviewerPlanner:
         llm = ChatAnthropic(model=self.cfg.model, max_tokens=8192)
         self.llm_with_tools = llm.bind_tools(TOOLS)
 
+    @ls_traceable(name="pr_reviewer.run", run_type="chain", tags=["pr-reviewer"])
     def run(self, repo: str, pr_number: int, post_comment: bool = False) -> str:
         """Run the security review loop and return the final Markdown report."""
+        cid = str(uuid.uuid4())
+        set_correlation_id(cid)
+        log.info("PR review started", extra={"repo": repo, "pr_number": pr_number})
+
         post_instruction = (
             f"After writing the Markdown review, call post_review_comment with "
             f"repo='{repo}', pr_number={pr_number}, and body=<your full Markdown review>."
@@ -183,48 +200,100 @@ class PRReviewerPlanner:
             HumanMessage(content=user_message),
         ]
 
-        for step in range(self.cfg.max_iterations):
-            if self.cfg.verbose:
-                print(f"\n[PRReviewer step {step + 1}] Calling LLM...")
+        _start = time.monotonic()
+        iterations = 0
 
-            response: AIMessage = self.llm_with_tools.invoke(messages)
-            messages.append(response)
+        try:
+            for step in range(self.cfg.max_iterations):
+                iterations = step + 1
+                log.debug("ReAct iteration", extra={"repo": repo, "pr_number": pr_number, "step": iterations})
 
-            # No tool calls → final answer
-            if not response.tool_calls:
-                if self.cfg.verbose:
-                    print("[PRReviewer] Final answer reached.\n")
-                if isinstance(response.content, str):
-                    return response.content
-                return "".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block)
-                    for block in response.content
-                )
+                response: AIMessage = self.llm_with_tools.invoke(messages)
+                messages.append(response)
 
-            # Execute each tool call
-            for tc in response.tool_calls:
-                name = tc["name"]
-                args = tc["args"]
-                call_id = tc["id"]
+                # Record per-turn token usage
+                usage = getattr(response, "usage_metadata", None)
+                if usage:
+                    record_tokens(
+                        prompt_tokens=usage.get("input_tokens", 0),
+                        completion_tokens=usage.get("output_tokens", 0),
+                    )
 
-                if self.cfg.verbose:
-                    args_preview = json.dumps(args)[:120]
-                    print(f"[PRReviewer]   → {name}({args_preview})")
+                # No tool calls → final answer
+                if not response.tool_calls:
+                    if isinstance(response.content, str):
+                        final_text = response.content
+                    else:
+                        final_text = "".join(
+                            block.get("text", "") if isinstance(block, dict) else str(block)
+                            for block in response.content
+                        )
 
-                if name not in TOOL_MAP:
-                    result = f"ERROR: unknown tool '{name}'"
-                else:
-                    try:
-                        result = TOOL_MAP[name].invoke(args)
-                    except Exception as e:
-                        result = f"ERROR executing {name}: {e}"
+                    # Parse findings from the markdown for metrics
+                    findings = _extract_findings(final_text)
+                    record_findings(findings)
+                    record_request("success")
+                    record_iterations(iterations)
 
-                if self.cfg.verbose:
-                    preview = str(result)[:160].replace("\n", " ")
-                    print(f"[PRReviewer]   ← {preview}...")
+                    elapsed = time.monotonic() - _start
+                    log.info(
+                        "PR review completed",
+                        extra={
+                            "repo": repo,
+                            "pr_number": pr_number,
+                            "iterations": iterations,
+                            "findings": len(findings),
+                            "duration_s": round(elapsed, 3),
+                        },
+                    )
+                    return final_text
 
-                messages.append(ToolMessage(content=str(result), tool_call_id=call_id))
+                # Execute each tool call
+                for tc in response.tool_calls:
+                    name = tc["name"]
+                    args = tc["args"]
+                    call_id = tc["id"]
 
-        raise RuntimeError(
-            f"max_iterations ({self.cfg.max_iterations}) reached without a final answer."
-        )
+                    log.debug("Tool called", extra={"repo": repo, "pr_number": pr_number, "tool": name})
+
+                    if name not in TOOL_MAP:
+                        result = f"ERROR: unknown tool '{name}'"
+                    else:
+                        try:
+                            result = TOOL_MAP[name].invoke(args)
+                        except Exception as e:
+                            result = f"ERROR executing {name}: {e}"
+                            log.warning("Tool error", extra={"tool": name, "error": str(e)})
+
+                    messages.append(ToolMessage(content=str(result), tool_call_id=call_id))
+
+            raise RuntimeError(
+                f"max_iterations ({self.cfg.max_iterations}) reached without a final answer."
+            )
+
+        except Exception as exc:
+            log.error("PR review failed", extra={"repo": repo, "pr_number": pr_number, "error": str(exc)})
+            record_request("error")
+            raise
+
+        finally:
+            record_duration(time.monotonic() - _start)
+
+
+def _extract_findings(markdown: str) -> list[dict]:
+    """Parse severity labels from the findings table in the review markdown.
+
+    Looks for rows containing emoji severity markers (🔴 HIGH, 🟠 MEDIUM,
+    🟡 LOW, ℹ️ INFO) and returns a minimal list of dicts with 'severity'.
+    Falls back to an empty list if the markdown cannot be parsed.
+    """
+    findings: list[dict] = []
+    severity_map = {"🔴": "HIGH", "🟠": "MEDIUM", "🟡": "LOW", "ℹ": "INFO"}
+    for line in markdown.splitlines():
+        if "|" not in line:
+            continue
+        for emoji, sev in severity_map.items():
+            if emoji in line:
+                findings.append({"severity": sev})
+                break
+    return findings

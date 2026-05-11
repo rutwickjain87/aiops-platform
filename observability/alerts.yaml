@@ -1,0 +1,176 @@
+---
+# observability/alerts.yaml
+# Prometheus alerting rules for the AIOps platform agents.
+#
+# HOW TO USE
+# ──────────
+# 1. Add this file to your Prometheus configuration:
+#
+#      rule_files:
+#        - /path/to/aiops-platform/observability/alerts.yaml
+#
+# 2. Or, if using the kube-prometheus-stack Helm chart, mount this as a
+#    PrometheusRule CRD.
+#
+# 3. Reload Prometheus:
+#      curl -X POST http://localhost:9090/-/reload
+#
+# ALERT ROUTING
+# ─────────────
+# Route all aiops alerts to your on-call channel:
+#
+#   route:
+#     match:
+#       team: aiops
+#     receiver: aiops-pagerduty
+#
+# SLO TARGETS
+# ───────────
+#   Availability:   99% success rate (error rate < 1% sustained over 5m)
+#   Alert latency:  p95 < 30s for slack-incident-bot
+#   Review latency: p95 < 3m for pr-reviewer
+
+groups:
+
+  # ── Slack Incident Bot ────────────────────────────────────────────────────────
+
+  - name: slack_incident_bot
+    interval: 1m
+    rules:
+
+      - alert: IncidentBotHighErrorRate
+        expr: |
+          (
+            rate(incident_bot_requests_total{status="error"}[5m])
+            /
+            (rate(incident_bot_requests_total[5m]) + 1e-9)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: aiops
+          agent: slack-incident-bot
+        annotations:
+          summary: "Incident bot error rate > 5% for 5 minutes"
+          description: |
+            The Slack incident bot is failing {{ printf "%.1f" (mul $value 100) }}% of alerts
+            over the last 5 minutes. Check logs for errors.
+            Dashboard: http://grafana/d/aiops-agent-observability-v1
+
+      - alert: IncidentBotHighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            rate(incident_bot_duration_seconds_bucket[5m])
+          ) > 30
+        for: 5m
+        labels:
+          severity: warning
+          team: aiops
+          agent: slack-incident-bot
+        annotations:
+          summary: "Incident bot p95 latency > 30s"
+          description: |
+            The Slack incident bot p95 end-to-end latency is {{ printf "%.1f" $value }}s,
+            which exceeds the 30s SLO. This may indicate LLM rate limiting or tool timeouts.
+
+      - alert: IncidentBotTokenBurnSpike
+        expr: |
+          rate(incident_bot_tokens_total[5m]) > 500
+        for: 10m
+        labels:
+          severity: warning
+          team: aiops
+          agent: slack-incident-bot
+        annotations:
+          summary: "Incident bot token burn rate spike (> 500 tokens/s)"
+          description: |
+            The incident bot is burning tokens at {{ printf "%.0f" $value }}/s,
+            which suggests a runaway ReAct loop or repeated retries.
+            Check incident_bot_iterations_total for average iteration count.
+
+      - alert: IncidentBotNoActivity
+        expr: |
+          absent(rate(incident_bot_requests_total[15m])) == 1
+        for: 15m
+        labels:
+          severity: info
+          team: aiops
+          agent: slack-incident-bot
+        annotations:
+          summary: "Incident bot has no request activity for 15 minutes"
+          description: |
+            No alerts processed in the last 15 minutes. This may be normal outside
+            business hours, or may indicate the bot process has stopped.
+
+  # ── PR Security Reviewer ─────────────────────────────────────────────────────
+
+  - name: pr_reviewer
+    interval: 1m
+    rules:
+
+      - alert: PRReviewerHighErrorRate
+        expr: |
+          (
+            rate(pr_reviewer_requests_total{status="error"}[5m])
+            /
+            (rate(pr_reviewer_requests_total[5m]) + 1e-9)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: aiops
+          agent: pr-reviewer
+        annotations:
+          summary: "PR reviewer error rate > 5% for 5 minutes"
+          description: |
+            The PR reviewer is failing {{ printf "%.1f" (mul $value 100) }}% of reviews.
+            Check GITHUB_TOKEN validity and Anthropic API quota.
+
+      - alert: PRReviewerHighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            rate(pr_reviewer_duration_seconds_bucket[5m])
+          ) > 180
+        for: 5m
+        labels:
+          severity: warning
+          team: aiops
+          agent: pr-reviewer
+        annotations:
+          summary: "PR reviewer p95 latency > 3 minutes"
+          description: |
+            The PR reviewer p95 latency is {{ printf "%.0f" $value }}s.
+            Large diffs or many changed files cause legitimate slowdowns,
+            but consistent > 3m latency may indicate rate limiting.
+
+      - alert: PRReviewerHighFindingsRate
+        expr: |
+          rate(pr_reviewer_findings_total{severity="HIGH"}[1h]) > 10
+        for: 30m
+        labels:
+          severity: warning
+          team: aiops
+          agent: pr-reviewer
+        annotations:
+          summary: "Unusually high rate of HIGH severity findings"
+          description: |
+            The PR reviewer is reporting > 10 HIGH severity findings per hour.
+            This may indicate a systematic security regression in the codebase
+            or a false-positive surge — review recent findings in LangSmith.
+
+      - alert: PRReviewerTokenBurnSpike
+        expr: |
+          rate(pr_reviewer_tokens_total[5m]) > 1000
+        for: 10m
+        labels:
+          severity: warning
+          team: aiops
+          agent: pr-reviewer
+        annotations:
+          summary: "PR reviewer token burn rate spike (> 1000 tokens/s)"
+          description: |
+            Token burn rate is {{ printf "%.0f" $value }}/s. Large diffs with many
+            files under Semgrep analysis can cause legitimate spikes, but sustained
+            high burn may indicate a retry loop.

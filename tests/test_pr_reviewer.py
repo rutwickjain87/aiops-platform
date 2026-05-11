@@ -15,6 +15,7 @@ NOTE: semgrep tests are skipped automatically if semgrep is not installed.
 
 from __future__ import annotations
 
+import importlib.util as _iu
 import json
 import sys
 from pathlib import Path
@@ -22,11 +23,37 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ── Path setup: add agents/pr-reviewer so we can import tools directly ─────────
-REPO_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(REPO_ROOT / "agents" / "pr-reviewer"))
+# ── Path setup ───────────────────────────────────────────────────────────────
+# IMPORTANT: both agents have files named tools.py, metrics.py, tracing.py, etc.
+# To avoid sys.modules collisions when both test files run in the same pytest
+# session, ALL pr-reviewer modules are loaded by file path via importlib.util
+# rather than by bare name (which would pollute the module cache and cause
+# slack-incident-bot tests to import the wrong modules).
 
-from tools import MARKER, fetch_pr_diff, post_review_comment, run_semgrep  # noqa: E402
+REPO_ROOT = Path(__file__).parent.parent
+PR_REVIEWER_DIR = REPO_ROOT / "agents" / "pr-reviewer"
+
+# Repo root on sys.path for the shared observability package ONLY.
+# Do NOT add PR_REVIEWER_DIR to sys.path — use importlib.util for all imports.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+
+def _load_pr_module(filename: str, mod_name: str):
+    """Load a pr-reviewer module by file path with a unique sys.modules key."""
+    spec = _iu.spec_from_file_location(mod_name, PR_REVIEWER_DIR / filename)
+    mod = _iu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# Load pr-reviewer tools with a unique key so sys.modules['tools'] stays clear
+# for the slack-incident-bot test suite.
+_pr_tools = _load_pr_module("tools.py", "pr_reviewer_tools")
+MARKER = _pr_tools.MARKER
+fetch_pr_diff = _pr_tools.fetch_pr_diff
+post_review_comment = _pr_tools.post_review_comment
+run_semgrep = _pr_tools.run_semgrep
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -214,17 +241,20 @@ class TestRunSemgrep:
 
     def test_semgrep_not_installed_returns_error_json(self, monkeypatch):
         """When semgrep is missing, return a JSON error (not raise an exception)."""
-        with patch("tools.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1)
+        # Patch subprocess inside the pr-reviewer tools module loaded by path.
+        # Using the module object (not a string) avoids sys.modules['tools'] ambiguity
+        # when both agent test files run in the same pytest session.
+        with patch.object(_pr_tools, "subprocess") as mock_subprocess:
+            mock_subprocess.run.return_value = MagicMock(returncode=1)
             result = run_semgrep.invoke({"code": "x = 1", "filename": "x.py"})
         data = json.loads(result)
         assert "error" in data
 
     def test_returns_valid_json(self):
         """run_semgrep must always return valid JSON regardless of outcome."""
-        with patch("tools.subprocess.run") as mock_run:
+        with patch.object(_pr_tools, "subprocess") as mock_subprocess:
             # Simulate semgrep available but returning empty results
-            mock_run.side_effect = [
+            mock_subprocess.run.side_effect = [
                 MagicMock(returncode=0),  # 'which semgrep'
                 MagicMock(
                     returncode=0,
@@ -356,3 +386,143 @@ class TestPostReviewComment:
 
         assert "ERROR" in result
         assert "403 Forbidden" in result
+
+
+# ── metrics.py ────────────────────────────────────────────────────────────────
+
+
+_pr_metrics_cache = None
+
+
+def _load_pr_metrics():
+    """Load agents/pr-reviewer/metrics.py by path (cached after first load).
+
+    Caching is required so _make_metrics() only runs once — prometheus_client
+    raises ValueError on duplicate metric registration, which causes _METRICS
+    to become {} on reload and record_*() calls to raise KeyError.
+    """
+    global _pr_metrics_cache
+    if _pr_metrics_cache is None:
+        _pr_metrics_cache = _load_pr_module("metrics.py", "pr_reviewer_metrics_mod")
+    return _pr_metrics_cache
+
+
+class TestPRReviewerMetrics:
+    """Prometheus metrics for the PR reviewer — same graceful-degradation contract."""
+
+    def test_module_imports_cleanly(self):
+        """metrics.py must be importable regardless of prometheus_client presence."""
+        pr_metrics = _load_pr_metrics()
+
+        assert callable(pr_metrics.metrics_enabled)
+        assert callable(pr_metrics.start_metrics_server)
+        assert callable(pr_metrics.record_request)
+        assert callable(pr_metrics.record_duration)
+        assert callable(pr_metrics.record_tokens)
+        assert callable(pr_metrics.record_iterations)
+        assert callable(pr_metrics.record_findings)
+
+    def test_metrics_disabled_via_env(self, monkeypatch):
+        """METRICS_ENABLED=false disables metrics."""
+        monkeypatch.setenv("METRICS_ENABLED", "false")
+        pr_metrics = _load_pr_metrics()
+
+        assert pr_metrics.metrics_enabled() is False
+
+    def test_record_request_no_error(self):
+        """record_request() must not raise."""
+        pr_metrics = _load_pr_metrics()
+
+        pr_metrics.record_request("success")
+        pr_metrics.record_request("error")
+
+    def test_record_duration_no_error(self):
+        """record_duration() must not raise."""
+        pr_metrics = _load_pr_metrics()
+
+        pr_metrics.record_duration(45.2)
+
+    def test_record_tokens_no_error(self):
+        """record_tokens() must not raise."""
+        pr_metrics = _load_pr_metrics()
+
+        pr_metrics.record_tokens(prompt_tokens=800, completion_tokens=200)
+
+    def test_record_iterations_no_error(self):
+        """record_iterations() must not raise."""
+        pr_metrics = _load_pr_metrics()
+
+        pr_metrics.record_iterations(7)
+
+    def test_record_findings_no_error(self):
+        """record_findings() must not raise with valid and invalid severities."""
+        pr_metrics = _load_pr_metrics()
+
+        findings = [
+            {"severity": "HIGH"},
+            {"severity": "MEDIUM"},
+            {"severity": "LOW"},
+            {"severity": "INFO"},
+            {"severity": "UNKNOWN"},  # should map to INFO, not raise
+            {},  # missing severity key — should default to INFO
+        ]
+        pr_metrics.record_findings(findings)
+
+    def test_record_findings_empty_list(self):
+        """record_findings([]) must not raise."""
+        pr_metrics = _load_pr_metrics()
+
+        pr_metrics.record_findings([])
+
+    def test_start_metrics_server_disabled_no_error(self, monkeypatch):
+        """start_metrics_server() with METRICS_ENABLED=false must not bind a port."""
+        monkeypatch.setenv("METRICS_ENABLED", "false")
+        pr_metrics = _load_pr_metrics()
+
+        pr_metrics.start_metrics_server(port=29999)
+
+
+# ── observability/logging.py ──────────────────────────────────────────────────
+
+
+class TestStructuredLogging:
+    """Shared JSON logging module — importable and functional."""
+
+    def test_module_imports_cleanly(self):
+        """observability package must be importable."""
+        import observability
+
+        assert callable(observability.get_logger)
+        assert callable(observability.set_correlation_id)
+        assert callable(observability.get_correlation_id)
+
+    def test_get_logger_returns_logger(self):
+        """get_logger() returns a logging.Logger instance."""
+        import logging
+
+        from observability import get_logger
+
+        log = get_logger("test.obs.module", agent="test-agent")
+        assert isinstance(log, logging.Logger)
+
+    def test_correlation_id_roundtrip(self):
+        """set_correlation_id / get_correlation_id round-trip correctly."""
+        from observability import get_correlation_id, set_correlation_id
+
+        set_correlation_id("test-cid-42")
+        assert get_correlation_id() == "test-cid-42"
+
+    def test_logger_does_not_raise_on_info(self):
+        """Calling log.info() must not raise regardless of formatter availability."""
+        from observability import get_logger, set_correlation_id
+
+        set_correlation_id("smoke-cid")
+        log = get_logger("test.obs.no_raise", agent="smoke-test")
+        log.info("Smoke test message", extra={"key": "value"})  # must not raise
+
+    def test_logger_accepts_extra_fields(self):
+        """Extra keyword arguments are passed through without raising."""
+        from observability import get_logger
+
+        log = get_logger("test.obs.extra", agent="extra-test")
+        log.warning("Warning with extras", extra={"alert_id": "A-001", "severity": "P1"})

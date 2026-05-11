@@ -47,7 +47,10 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
+import uuid
+from pathlib import Path
 from typing import Any
 
 import anthropic
@@ -56,6 +59,12 @@ from memory import Memory, SYSTEM_PROMPT
 from metrics import record_duration, record_iterations, record_request, record_tokens
 from tools import TOOLS, TOOL_FUNCTIONS
 from tracing import init_tracing_client, ls_traceable
+
+# Make the shared observability package importable from the repo root
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from observability import get_logger, set_correlation_id  # noqa: E402
+
+log = get_logger(__name__, agent="slack-incident-bot")
 
 # Safety cap: prevent runaway loops on unexpected LLM behaviour
 MAX_ITERATIONS = 10
@@ -98,6 +107,10 @@ class IncidentPlanner:
         Returns a dict with keys: incident_id, ts, status, iterations.
         Raises RuntimeError if the agent exceeds MAX_ITERATIONS.
         """
+        cid = str(uuid.uuid4())
+        set_correlation_id(cid)
+        log.info("handle_alert started", extra={"alert_id": alert_id})
+
         self._memory.reset()
         user_msg = (
             f"New alert has fired: {alert_id}\n"
@@ -112,6 +125,7 @@ class IncidentPlanner:
         try:
             while iterations < MAX_ITERATIONS:
                 iterations += 1
+                log.debug("ReAct iteration", extra={"alert_id": alert_id, "iteration": iterations})
 
                 response = self._client.messages.create(
                     model=self._config.model,
@@ -135,6 +149,11 @@ class IncidentPlanner:
                     result["iterations"] = iterations
                     record_request("success")
                     record_iterations(iterations)
+                    elapsed = time.monotonic() - _start
+                    log.info(
+                        "handle_alert completed",
+                        extra={"alert_id": alert_id, "iterations": iterations, "duration_s": round(elapsed, 3)},
+                    )
                     return result
 
                 if response.stop_reason != "tool_use":
@@ -151,6 +170,7 @@ class IncidentPlanner:
                     tool_input = block.input
                     tool_use_id = block.id
 
+                    log.debug("Tool called", extra={"alert_id": alert_id, "tool": tool_name})
                     tool_result = self._dispatch(tool_name, tool_input)
                     self._memory.add_tool_result(tool_use_id, tool_result)
 
@@ -167,7 +187,8 @@ class IncidentPlanner:
                 f"Agent exceeded MAX_ITERATIONS ({MAX_ITERATIONS}) for alert {alert_id}."
             )
 
-        except Exception:
+        except Exception as exc:
+            log.error("handle_alert failed", extra={"alert_id": alert_id, "error": str(exc)})
             record_request("error")
             raise
 

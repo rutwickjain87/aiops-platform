@@ -7,12 +7,17 @@
 #   make setup-bot           # bootstrap slack-incident-bot venv only
 #   make test                # run ALL unit tests (all agents)
 #   make test-log            # run log-intelligence tests only
-#   make test-bot            # run slack-incident-bot tests only (24 tests)
+#   make test-bot            # run slack-incident-bot tests only
 #   make eval                # run eval suite (Anthropic backend, threshold 80%)
 #   make eval THRESHOLD=1.0  # stricter threshold
 #   make eval BACKEND=langchain
 #   make lint                # ruff check + format check
 #   make fmt                 # auto-fix formatting
+#   make obs-up              # start Prometheus + Loki + Grafana stack
+#   make obs-down            # stop observability stack
+#   make obs-logs            # tail observability container logs
+#   make run-bot             # run bot and stream JSON logs → logs/slack-incident-bot.log
+#   make run-reviewer        # run pr-reviewer → logs/pr-reviewer.log
 
 # ── Venv paths ────────────────────────────────────────────────────────────────
 LOG_AGENT_DIR   := agents/log-intelligence
@@ -31,7 +36,8 @@ THRESHOLD       ?= 0.80
 BACKEND         ?= anthropic
 RESULTS_DIR     := evals/results
 
-.PHONY: eval test test-log test-bot lint fmt setup setup-log setup-bot help
+.PHONY: eval test test-log test-bot lint fmt setup setup-log setup-bot \
+        obs-up obs-down obs-logs run-bot run-reviewer help
 
 .DEFAULT_GOAL := help
 
@@ -84,6 +90,58 @@ eval:
 	    --threshold $(THRESHOLD) \
 	    --output ../../$(RESULTS_DIR)/latest.json
 
+# ── observability stack ───────────────────────────────────────────────────────
+# Starts Prometheus + Loki + Promtail + Grafana via Docker Compose.
+# Requires Docker Desktop to be running.
+obs-up:
+	@echo "Starting observability stack (Prometheus + Loki + Grafana)..."
+	@mkdir -p logs
+	docker compose -f observability/docker-compose.yml up -d
+	@echo ""
+	@echo "  Grafana   → http://localhost:3000  (admin / aiops)"
+	@echo "  Prometheus → http://localhost:9090"
+	@echo "  Loki      → http://localhost:3100"
+	@echo ""
+	@echo "  Start an agent to ship metrics and logs:"
+	@echo "  make run-bot        # bot metrics on :8000, logs → logs/slack-incident-bot.log"
+	@echo "  make run-reviewer   # reviewer metrics on :8001, logs → logs/pr-reviewer.log"
+
+obs-down:
+	docker compose -f observability/docker-compose.yml down
+
+obs-logs:
+	docker compose -f observability/docker-compose.yml logs -f
+
+# ── agent runners (with log file output for Promtail) ─────────────────────────
+# Run agents and tee stdout to logs/ so Promtail can pick them up.
+# Set ALERT_ID or REPO/PR env vars to customise the trigger.
+
+ALERT_ID  ?= ALERT-001
+PR_REPO   ?= owner/repo
+PR_NUMBER ?= 1
+
+run-bot:
+	@if [ ! -f "$(BOT_VENV)/bin/python" ]; then \
+	    echo "⚠️  slack-incident-bot venv not found — run: make setup-bot"; \
+	    exit 1; \
+	fi
+	@mkdir -p logs
+	@echo "Starting bot (trigger=$(ALERT_ID)) — logs → logs/slack-incident-bot.log"
+	cd $(BOT_AGENT_DIR) && \
+	    METRICS_ENABLED=true METRICS_PORT=8000 \
+	    $(BOT_VENV)/bin/python bot.py --trigger $(ALERT_ID) 2>&1 | tee ../../logs/slack-incident-bot.log
+
+run-reviewer:
+	@if [ ! -f "$(BOT_VENV)/bin/python" ]; then \
+	    echo "⚠️  slack-incident-bot venv not found — run: make setup-bot"; \
+	    exit 1; \
+	fi
+	@mkdir -p logs
+	@echo "Starting pr-reviewer (repo=$(PR_REPO) pr=$(PR_NUMBER)) — logs → logs/pr-reviewer.log"
+	cd agents/pr-reviewer && \
+	    METRICS_ENABLED=true METRICS_PORT=8001 \
+	    python reviewer.py --repo $(PR_REPO) --pr $(PR_NUMBER) 2>&1 | tee ../../logs/pr-reviewer.log
+
 # ── lint ──────────────────────────────────────────────────────────────────────
 lint:
 	$(LOG_VENV)/bin/ruff check .
@@ -107,7 +165,7 @@ help:
 	@echo "  ─────────────────────────────────────────────────────────────"
 	@echo "  make test            Run ALL unit tests (all agents)"
 	@echo "  make test-log        Run log-intelligence tests only"
-	@echo "  make test-bot        Run slack-incident-bot tests only (24 tests)"
+	@echo "  make test-bot        Run slack-incident-bot tests only"
 	@echo ""
 	@echo "  Evaluation"
 	@echo "  ─────────────────────────────────────────────────────────────"

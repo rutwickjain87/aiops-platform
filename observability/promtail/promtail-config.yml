@@ -1,0 +1,104 @@
+# observability/promtail/promtail-config.yml
+#
+# Promtail tails JSON log files written by the AIOps agents and ships them
+# to Loki with structured labels extracted from the JSON fields.
+#
+# LOG FILE LOCATIONS (mounted from repo root logs/ directory)
+# ────────────────────────────────────────────────────────────
+#   /logs/slack-incident-bot.log   ← agent stdout redirected here
+#   /logs/pr-reviewer.log          ← agent stdout redirected here
+#
+# HOW TO GENERATE LOG FILES
+# ──────────────────────────
+#   make run-bot          # runs bot and tees stdout → logs/slack-incident-bot.log
+#   make run-reviewer     # runs reviewer → logs/pr-reviewer.log
+#
+# LOKI LABELS ADDED
+# ─────────────────
+#   job      = aiops
+#   agent    = slack-incident-bot | pr-reviewer
+#   level    = INFO | WARNING | ERROR | DEBUG  (extracted from JSON)
+#   logger   = module name (extracted from JSON)
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml   # tracks read position across restarts
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+
+  # ── Slack Incident Bot ───────────────────────────────────────────────────────
+  - job_name: slack-incident-bot
+    static_configs:
+      - targets: ['localhost']
+        labels:
+          job: aiops
+          agent: slack-incident-bot
+          __path__: /logs/slack-incident-bot.log
+
+    pipeline_stages:
+      # Parse the JSON log line
+      - json:
+          expressions:
+            level:          level
+            logger:         logger
+            correlation_id: correlation_id
+            message:        message
+            alert_id:       alert_id
+
+      # Promote level and logger to Loki stream labels
+      # (allows filtering by level in Grafana without scanning all logs)
+      - labels:
+          level:
+          logger:
+
+      # Use the timestamp embedded in the JSON (not ingest time)
+      - timestamp:
+          source: timestamp
+          format: "2006-01-02T15:04:05Z"
+          fallback_formats:
+            - "2006-01-02T15:04:05.999999999Z07:00"
+
+      # Drop DEBUG logs to keep Loki storage lean for local dev
+      # Remove this stage if you want to see all log levels in Grafana
+      - match:
+          selector: '{agent="slack-incident-bot", level="DEBUG"}'
+          action: drop
+
+  # ── PR Security Reviewer ─────────────────────────────────────────────────────
+  - job_name: pr-reviewer
+    static_configs:
+      - targets: ['localhost']
+        labels:
+          job: aiops
+          agent: pr-reviewer
+          __path__: /logs/pr-reviewer.log
+
+    pipeline_stages:
+      - json:
+          expressions:
+            level:          level
+            logger:         logger
+            correlation_id: correlation_id
+            message:        message
+            repo:           repo
+            pr_number:      pr_number
+
+      - labels:
+          level:
+          logger:
+
+      - timestamp:
+          source: timestamp
+          format: "2006-01-02T15:04:05Z"
+          fallback_formats:
+            - "2006-01-02T15:04:05.999999999Z07:00"
+
+      - match:
+          selector: '{agent="pr-reviewer", level="DEBUG"}'
+          action: drop

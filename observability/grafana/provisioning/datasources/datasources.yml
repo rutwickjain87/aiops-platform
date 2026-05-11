@@ -1,0 +1,35 @@
+# observability/grafana/provisioning/datasources/datasources.yml
+#
+# Grafana auto-provisions these datasources on startup — no manual UI steps needed.
+# Prometheus is the default; Loki is wired to the same uid used in dashboard panels.
+
+apiVersion: 1
+
+datasources:
+
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    uid: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: "15s"
+
+  - name: Loki
+    type: loki
+    access: proxy
+    uid: loki
+    url: http://loki:3100
+    isDefault: false
+    editable: false
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        # Click a correlation_id in a log line and jump to the matching traces
+        - name: correlation_id
+          matcherRegex: '"correlation_id":"([^"]+)"'
+          url: ""
+          urlDisplayLabel: "correlation_id"
