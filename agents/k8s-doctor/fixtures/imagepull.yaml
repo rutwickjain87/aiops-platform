@@ -1,0 +1,38 @@
+# fixtures/imagepull.yaml
+#
+# Deliberately broken deployment — triggers ImagePullBackOff.
+# The image tag does not exist on Docker Hub.
+#
+# Deploy:  kubectl apply -f fixtures/imagepull.yaml --context kind-doctor-lab
+# Remove:  kubectl delete -f fixtures/imagepull.yaml --context kind-doctor-lab
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: imagepull-demo
+  namespace: doctor-lab
+  labels:
+    app: imagepull-demo
+    scenario: image-pull-backoff
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: imagepull-demo
+  template:
+    metadata:
+      labels:
+        app: imagepull-demo
+        scenario: image-pull-backoff
+    spec:
+      containers:
+        - name: imagepull-demo
+          # This image tag does not exist → ErrImagePull → ImagePullBackOff
+          image: nginx:this-tag-does-not-exist-99999
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "50m"
+              memory: "32Mi"

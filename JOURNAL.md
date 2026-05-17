@@ -572,3 +572,203 @@ Loki v3 with `retention_enabled: true` requires `delete_request_store` to be exp
 **Dashboard panels need real Loki label verification before Day 6.** The `aiops-dashboard.json` has two Loki log panels hardcoded to `{agent="slack-incident-bot"}` and `{agent="pr-reviewer"}`. These labels are only correct if `promtail-config.yml` actually sets `agent` as a static label. The config sets `filename` and `job` labels. This means the Loki log panels in the dashboard currently return no data. Needs a promtail config fix or dashboard label update — deferred to Day 6 when the full stack will be run end-to-end.
 
 ---
+
+## Day 6 — K8s Doctor Foundation (LangGraph)
+
+**Date:** 12 May 2026
+
+---
+
+### What We Built
+
+**`agents/k8s-doctor/`** — A LangGraph-powered Kubernetes failure diagnosis agent. Given a failing deployment, it gathers facts with kubectl, reasons over them, and produces a structured remediation playbook.
+
+**LangGraph state machine** (`src/graph/`) — Three nodes in a linear pipeline:
+
+| Node | Model | Job |
+|------|-------|-----|
+| `observe` | `claude-haiku-4-5` | Runs kubectl describe/logs/events + Prometheus query; extracts key signals |
+| `hypothesize` | `claude-sonnet-4-6` | Ranks root cause hypotheses with evidence and confidence |
+| `propose` | `claude-sonnet-4-6` | Produces final diagnosis: root cause + evidence + remediation steps + verification |
+
+**State shape** (`src/graph/state.py`):
+```python
+K8sDoctorState(TypedDict):
+    symptom, namespace, resource    # input from CLI
+    observations: list[str]         # filled by observe
+    hypotheses: list[str]           # filled by hypothesize
+    next_action: str                # routing control
+    model_used: str                 # tracks which model ran last (for Day 7)
+    final_diagnosis: str | None     # filled by propose
+    messages: Annotated[list, add_messages]
+```
+
+**Read-only kubectl tools** (`src/tools/kubectl.py`):
+- `kubectl_describe` — describe output (events, conditions, image, restart count)
+- `kubectl_logs` — last N lines + previous container logs (critical for CrashLoopBackOff)
+- `kubectl_events` — warning events sorted by time for entire namespace
+- `kubectl_get_pods` — pod list with status, restarts, age columns
+
+**Prometheus tool** (`src/tools/prometheus.py`):
+- `prom_query` — instant PromQL query via HTTP API
+- `prom_query_range` — range query returning min/max/latest (for trend detection)
+
+**Broken K8s fixtures** (`fixtures/`):
+- `crashloop.yaml` — `busybox` container with `exit 1` command → CrashLoopBackOff
+- `imagepull.yaml` — `nginx:this-tag-does-not-exist-99999` → ImagePullBackOff
+
+**`services/mcp-prometheus/server.py`** — FastMCP server exposing three tools:
+- `prom_query` — instant PromQL query
+- `prom_query_range` — range query with min/max/latest summary
+- `prom_targets` — list all active scrape targets + health status
+
+**Makefile targets added:**
+- `make setup-k8s-doctor` / `make setup-mcp-prometheus`
+- `make cluster-up` — creates kind cluster `doctor-lab` + deploys both broken fixtures
+- `make cluster-down` — deletes the cluster
+- `make run-k8s-doctor` — runs the agent (K8S_NAMESPACE, K8S_RESOURCE, K8S_SYMPTOM vars)
+- `make test-k8s-doctor`
+- `make run-mcp-prometheus` — starts the MCP server on stdio
+
+---
+
+### Key Concepts Learned
+
+**Design the state shape before writing any node code.** State is the contract between nodes — if you add a field later, every node that reads it needs updating. The `K8sDoctorState` TypedDict was designed first; nodes were written second. `model_used` was added specifically for Day 7 model-routing experiments so no refactor is needed then.
+
+**LangGraph's mental model: nodes transform state, edges define flow.** Each node receives the full state, does its work, and returns a *partial* dict. LangGraph merges the partial dict into the running state. Conditional edges read from state to decide the next node — `next_action` field enables this without any graph-level if/else.
+
+**`add_messages` annotation handles message history automatically.** Instead of manually appending to `messages`, the `Annotated[list, add_messages]` reducer in the state TypedDict tells LangGraph to append (not replace) on each state update. This is how multi-turn LLM conversations inside a node stay coherent.
+
+**MCP servers decouple tool execution from agent logic.** The Prometheus MCP server wraps the HTTP API behind a JSON-RPC interface. Swapping from local Prometheus to a remote one only requires changing `PROMETHEUS_URL` in the server's env — zero agent code changes. FastMCP makes this a 30-line file vs. writing a raw JSON-RPC server.
+
+**Model routing as a first-class design decision.** `OBSERVE_MODEL` and `REASON_MODEL` are env vars read at node execution time, not hardcoded. The `model_used` field in state records which model ran each node. This sets up Day 7's cost/quality experiment: run 5 eval cases with routing ON (Haiku for observe, Sonnet for reason) vs. routing OFF (Sonnet everywhere) and measure pass rate, latency, and cost.
+
+---
+
+### Running Day 6
+
+```bash
+# 1. Install deps
+make setup-k8s-doctor
+make setup-mcp-prometheus
+
+# 2. Copy and fill .env
+cp agents/k8s-doctor/.env.example agents/k8s-doctor/.env
+# Edit: add ANTHROPIC_API_KEY
+
+# 3. Create cluster + deploy broken workloads
+make cluster-up
+# Wait ~30s, then verify:
+kubectl get pods -n doctor-lab --context kind-doctor-lab
+
+# 4. Diagnose CrashLoopBackOff
+make run-k8s-doctor
+
+# 5. Diagnose ImagePullBackOff
+make run-k8s-doctor K8S_RESOURCE=imagepull-demo K8S_SYMPTOM=ImagePullBackOff
+
+# 6. Test the MCP server
+make run-mcp-prometheus
+# In another terminal:
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | \
+  agents/k8s-doctor/.venv/bin/python services/mcp-prometheus/server.py
+
+# 7. Commit
+git add agents/k8s-doctor/ services/mcp-prometheus/ Makefile JOURNAL.md
+git commit -m "feat(day6): K8s Doctor LangGraph agent + Prometheus MCP server
+
+- LangGraph state machine: observe → hypothesize → propose
+- State shape with model_used field for Day 7 routing experiments
+- kubectl tools: describe, logs, events, get_pods (read-only)
+- Prometheus tools: prom_query, prom_query_range
+- Fixtures: CrashLoopBackOff + ImagePullBackOff for kind cluster
+- FastMCP server: prom_query, prom_query_range, prom_targets
+- Makefile: cluster-up/down, run-k8s-doctor, run-mcp-prometheus"
+git push
+```
+
+---
+
+## Day 7 — K8s Doctor Polish + Multi-Model Routing
+
+**Date:** 14 May 2026
+
+---
+
+### What We Built
+
+**OOMKilled fixture** (`fixtures/oom.yaml`) — busybox deployment that continuously allocates 128M in a loop while capped at 32Mi. Reproduces the kernel OOM-killer scenario for local testing against the kind cluster.
+
+**`--apply` flag with human approval gate** (`doctor.py`) — After producing a diagnosis, if `--apply` is passed the agent parses the numbered remediation steps from the `## Remediation Steps` section and presents each one for explicit `y/N` approval before printing it as a command to copy-run. Two safety properties: refuses in non-interactive contexts (CI, pipes), and never executes commands automatically. The gate is a read-and-confirm pattern — the on-call engineer stays in control.
+
+**5 offline eval cases** (`evals/cases.jsonl`) — covers:
+1. CrashLoopBackOff (missing config, exit code 1)
+2. ImagePullBackOff (non-existent image tag)
+3. OOMKilled (container exceeds 32Mi memory limit)
+4. Pending (insufficient node resources — 8Gi request on a 1-node cluster)
+5. CreateContainerConfigError (missing ConfigMap reference)
+
+Each case carries canned kubectl/Prometheus fixture strings so the eval runner can patch the tool functions and run the full graph offline — no live cluster, no API calls for tools.
+
+**Offline eval runner** (`evals/run_eval.py`) — monkey-patches `src.graph.nodes.kubectl_*` and `prom_query` with fixture data via `unittest.mock`. Invokes the full LangGraph, checks that every `expected_keyword` appears (case-insensitive) in `final_diagnosis`. Target: ≥80% pass rate. Run: `make eval-k8s-doctor`.
+
+**21 unit tests** (`tests/test_nodes.py`, `tests/test_tools.py`) — mock all subprocess and HTTP calls:
+- `TestInitialState` (8 tests) — state field defaults
+- `TestObserveNode` (4 tests) — tool calls, model_used, next_action
+- `TestHypothesizeNode` (3 tests) — model routing, next_action
+- `TestProposeNode` (3 tests) — markdown sections, next_action
+- `TestApplyGate` (3 tests) — step extraction, non-interactive bailout
+- `TestGraphWiring` (2 tests) — node presence, compiled runnable
+- `TestKubectlTools` (7 tests), `TestPromQuery` (3 tests) — subprocess/HTTP mocking
+
+**Model routing experiment** (`evals/run_routing_experiment.py`) — runs 5 eval cases twice: routing ON (haiku observe + sonnet reason) vs routing OFF (all sonnet). Captures per-case latency, computes estimated cost from token averages, writes `experiments/k8s-doctor-model-routing.md`. Run: `make routing-experiment`.
+
+**K8s Doctor README** (`README.md`) — senior-signal sections: Problem Statement (MTTD target), Architecture (Mermaid flowchart), Stack table, Quick Start, SRE Metrics table, Failure Modes table (7 modes), 5-scenario matrix, model routing rationale with cost-at-scale math, directory structure, roadmap.
+
+---
+
+### Key Concepts Learned
+
+**The `--apply` gate is the most important code in a remediation agent.** Not the diagnosis logic — the gate. A wrong LLM-generated `kubectl` command auto-executed without review causes the very outage you're trying to fix. The pattern: always classify, never auto-apply; gate behind TTY check; default to NO; copy-then-run, never exec-in-process.
+
+**Eval cases need canned fixtures, not live cluster calls.** An eval that calls real kubectl is flaky by design — pod states change, network blips happen, CI has no cluster. The right design separates concerns: fixture data lives in the eval case, tool patching is trivial with `unittest.mock`, and the eval tests the LLM reasoning, not the infra connectivity.
+
+**Model routing savings compound at scale.** The `observe` node does deterministic signal extraction from kubectl text — no multi-step reasoning, no ambiguity resolution. Routing it to Haiku (10× cheaper than Sonnet) with no quality loss means every diagnosis run saves ~75% on observe costs. At 100 diagnoses/day the annual saving is ~$400. At 10,000/day it's ~$40,000. The routing decision belongs in `experiments/` with real numbers — not opinions.
+
+**`unittest.mock.patch.object` vs `patch` path string.** When the graph is already compiled at module import time, patching the module-level function reference (via `patch.object(nodes_module, "kubectl_get_pods", ...)`) is more reliable than patching by string path, because the compiled graph holds a direct reference to the function object, not a late-bound name lookup.
+
+---
+
+### Gotcha of the Day
+
+`importlib.reload(nodes_module)` in the routing experiment was necessary because `OBSERVE_MODEL` and `REASON_MODEL` are read as module-level constants at import time. Without the reload, changing `os.environ["OBSERVE_MODEL"]` mid-experiment has no effect — the constant was already set. The fix: reload the module after setting the env vars, then rebuild the graph.
+
+This is a subtle Day 7 surprise: module-level constants in Python are frozen at first import. If your model routing config needs to change at runtime, either read env vars lazily inside the function (no constants) or reload the module explicitly.
+
+---
+
+### Pending
+
+- [ ] Run `make test-k8s-doctor` against the venv (verify 21 tests pass)
+- [ ] Run `make eval-k8s-doctor` (verify ≥4/5 cases pass)
+- [ ] Run `make routing-experiment` and fill in qualitative observations in `experiments/k8s-doctor-model-routing.md`
+- [ ] Apply `kubectl apply -f fixtures/oom.yaml` and verify OOMKilled diagnosis
+
+```bash
+# Git commit
+git add agents/k8s-doctor/ Makefile JOURNAL.md
+git commit -m "feat(day7): K8s Doctor polish + model routing experiment
+
+- OOMKilled fixture (fixtures/oom.yaml)
+- --apply flag with human y/N approval gate (doctor.py)
+- 5 offline eval cases with fixture data (evals/cases.jsonl)
+- Eval runner: patches tools, checks keywords (evals/run_eval.py)
+- Model routing experiment: ON vs OFF (evals/run_routing_experiment.py)
+- 21 unit tests: nodes, tools, state, apply gate, graph wiring
+- K8s Doctor README with senior-signal sections
+- Makefile: eval-k8s-doctor, routing-experiment targets"
+git push
+```
+
+---

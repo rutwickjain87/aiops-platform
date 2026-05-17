@@ -1,0 +1,4 @@
+# mcp-prometheus — MCP server dependencies
+mcp[cli]>=1.0.0       # FastMCP server + stdio transport
+requests>=2.32.0      # Prometheus HTTP API client
+python-dotenv>=1.0.0

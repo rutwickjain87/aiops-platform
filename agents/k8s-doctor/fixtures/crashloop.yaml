@@ -1,0 +1,45 @@
+# fixtures/crashloop.yaml
+#
+# Deliberately broken deployment — triggers CrashLoopBackOff.
+# The container exits immediately with code 1 because the command fails.
+# K8s restarts it repeatedly → CrashLoopBackOff.
+#
+# Deploy:  kubectl apply -f fixtures/crashloop.yaml --context kind-doctor-lab
+# Remove:  kubectl delete -f fixtures/crashloop.yaml --context kind-doctor-lab
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crashloop-demo
+  namespace: doctor-lab
+  labels:
+    app: crashloop-demo
+    scenario: crashloop-backoff
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: crashloop-demo
+  template:
+    metadata:
+      labels:
+        app: crashloop-demo
+        scenario: crashloop-backoff
+    spec:
+      containers:
+        - name: crashloop-demo
+          image: busybox:1.36
+          # This command always exits with code 1 → triggers CrashLoopBackOff
+          command: ["sh", "-c", "echo 'FATAL: missing required config'; exit 1"]
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "50m"
+              memory: "32Mi"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: doctor-lab

@@ -19,6 +19,15 @@
 #   make obs-logs                # tail observability container logs
 #   make run-slack-bot           # run bot and stream JSON logs → logs/slack-incident-bot.log
 #   make run-pr-reviewer         # run pr-reviewer → logs/pr-reviewer.log
+#   make setup-k8s-doctor        # bootstrap k8s-doctor venv only
+#   make cluster-up              # create kind cluster + deploy broken fixtures
+#   make cluster-down            # delete kind cluster
+#   make run-k8s-doctor          # diagnose CrashLoopBackOff in doctor-lab
+#   make test-k8s-doctor         # run k8s-doctor unit tests
+#   make setup-mcp-prometheus    # bootstrap mcp-prometheus venv only
+#   make run-mcp-prometheus      # start Prometheus MCP server (stdio)
+#   make eval-k8s-doctor         # run offline eval suite (no cluster required)
+#   make routing-experiment      # run model routing experiment (ON vs OFF)
 
 # ── Venv paths ────────────────────────────────────────────────────────────────
 LOG_AGENT_DIR   := agents/log-intelligence
@@ -38,21 +47,38 @@ PR_PYTHON       := $(PR_VENV)/bin/python
 PR_PYTEST       := $(PR_VENV)/bin/pytest
 PR_PYTHON_ABS   := $(CURDIR)/$(PR_VENV)/bin/python
 
+K8S_AGENT_DIR   := agents/k8s-doctor
+K8S_VENV        := $(K8S_AGENT_DIR)/.venv
+K8S_PYTHON      := $(K8S_VENV)/bin/python
+K8S_PYTEST      := $(K8S_VENV)/bin/pytest
+K8S_PYTHON_ABS  := $(CURDIR)/$(K8S_VENV)/bin/python
+
+MCP_PROM_DIR    := services/mcp-prometheus
+MCP_PROM_VENV   := $(MCP_PROM_DIR)/.venv
+MCP_PROM_PYTHON_ABS := $(CURDIR)/$(MCP_PROM_VENV)/bin/python
+
+K8S_NAMESPACE   ?= doctor-lab
+K8S_RESOURCE    ?= crashloop-demo
+K8S_SYMPTOM     ?= CrashLoopBackOff
+K8S_CONTEXT     ?= kind-doctor-lab
+
 UV              := uv
 
 THRESHOLD       ?= 0.80
 BACKEND         ?= anthropic
 RESULTS_DIR     := evals/results
 
-.PHONY: eval test test-log test-slack-bot test-pr-reviewer lint fmt \
-        setup setup-log setup-slack-bot setup-pr-reviewer \
-        obs-up obs-down obs-logs run-slack-bot run-pr-reviewer help
+.PHONY: eval test test-log test-slack-bot test-pr-reviewer test-k8s-doctor lint fmt \
+        setup setup-log setup-slack-bot setup-pr-reviewer setup-k8s-doctor setup-mcp-prometheus \
+        obs-up obs-down obs-logs run-slack-bot run-pr-reviewer \
+        cluster-up cluster-down run-k8s-doctor run-mcp-prometheus \
+        eval-k8s-doctor routing-experiment help
 
 .DEFAULT_GOAL := help
 
 # ── setup ─────────────────────────────────────────────────────────────────────
 # Bootstrap all agent venvs (run once after clone or after pulling new deps)
-setup: setup-log setup-slack-bot setup-pr-reviewer
+setup: setup-log setup-slack-bot setup-pr-reviewer setup-k8s-doctor setup-mcp-prometheus
 
 setup-log:
 	@echo "Setting up log-intelligence venv..."
@@ -68,10 +94,20 @@ setup-pr-reviewer:
 	cd $(PR_AGENT_DIR) && $(UV) venv .venv && $(UV) pip install -r requirements.txt --python .venv/bin/python
 	@echo "PR reviewer venv ready at $(PR_VENV)"
 
+setup-k8s-doctor:
+	@echo "Setting up k8s-doctor venv..."
+	cd $(K8S_AGENT_DIR) && $(UV) venv .venv && $(UV) pip install -r requirements.txt --python .venv/bin/python
+	@echo "K8s Doctor venv ready at $(K8S_VENV)"
+
+setup-mcp-prometheus:
+	@echo "Setting up mcp-prometheus venv..."
+	cd $(MCP_PROM_DIR) && $(UV) venv .venv && $(UV) pip install -r requirements.txt --python .venv/bin/python
+	@echo "MCP Prometheus venv ready at $(MCP_PROM_VENV)"
+
 # ── test ──────────────────────────────────────────────────────────────────────
 # Runs all unit tests across all agents.
 # Each agent uses its own venv so deps stay isolated.
-test: test-log test-slack-bot
+test: test-log test-slack-bot test-k8s-doctor
 
 test-log:
 	@if [ ! -f "$(LOG_PYTEST)" ]; then \
@@ -156,6 +192,68 @@ run-pr-reviewer:
 	    METRICS_ENABLED=true METRICS_PORT=8001 \
 	    $(PR_PYTHON_ABS) reviewer.py --repo $(PR_REPO) --pr $(PR_NUMBER) 2>&1 | tee ../../logs/pr-reviewer.log
 
+# ── k8s-doctor ────────────────────────────────────────────────────────────────
+# Requires: kind installed + make setup-k8s-doctor run first.
+
+cluster-up:
+	@echo "Creating kind cluster 'doctor-lab'..."
+	kind create cluster --name doctor-lab 2>/dev/null || echo "Cluster already exists"
+	@echo "Deploying broken fixtures..."
+	kubectl apply -f $(K8S_AGENT_DIR)/fixtures/crashloop.yaml --context kind-doctor-lab
+	kubectl apply -f $(K8S_AGENT_DIR)/fixtures/imagepull.yaml --context kind-doctor-lab
+	@echo ""
+	@echo "  Wait ~30s then check:"
+	@echo "  kubectl get pods -n doctor-lab --context kind-doctor-lab"
+
+cluster-down:
+	@echo "Deleting kind cluster 'doctor-lab'..."
+	kind delete cluster --name doctor-lab
+
+test-k8s-doctor:
+	@if [ ! -f "$(K8S_PYTEST)" ]; then \
+	    echo "⚠️  k8s-doctor venv not found — run: make setup-k8s-doctor"; \
+	    exit 1; \
+	fi
+	@echo "Running k8s-doctor tests..."
+	cd $(K8S_AGENT_DIR) && $(K8S_PYTHON_ABS) -m pytest tests/ -v
+
+run-k8s-doctor:
+	@if [ ! -f "$(K8S_PYTHON_ABS)" ]; then \
+	    echo "⚠️  k8s-doctor venv not found — run: make setup-k8s-doctor"; \
+	    exit 1; \
+	fi
+	@echo "Running K8s Doctor (namespace=$(K8S_NAMESPACE) resource=$(K8S_RESOURCE))"
+	cd $(K8S_AGENT_DIR) && \
+	    $(K8S_PYTHON_ABS) doctor.py \
+	        --namespace $(K8S_NAMESPACE) \
+	        --resource $(K8S_RESOURCE) \
+	        --symptom "$(K8S_SYMPTOM)" \
+	        --context $(K8S_CONTEXT)
+
+run-mcp-prometheus:
+	@if [ ! -f "$(MCP_PROM_PYTHON_ABS)" ]; then \
+	    echo "⚠️  mcp-prometheus venv not found — run: make setup-mcp-prometheus"; \
+	    exit 1; \
+	fi
+	@echo "Starting Prometheus MCP server (stdio)..."
+	cd $(MCP_PROM_DIR) && $(MCP_PROM_PYTHON_ABS) server.py
+
+eval-k8s-doctor:
+	@if [ ! -f "$(K8S_PYTEST)" ]; then \
+	    echo "⚠️  k8s-doctor venv not found — run: make setup-k8s-doctor"; \
+	    exit 1; \
+	fi
+	@echo "Running K8s Doctor offline eval (no live cluster required)..."
+	cd $(K8S_AGENT_DIR) && $(K8S_PYTHON_ABS) evals/run_eval.py
+
+routing-experiment:
+	@if [ ! -f "$(K8S_PYTEST)" ]; then \
+	    echo "⚠️  k8s-doctor venv not found — run: make setup-k8s-doctor"; \
+	    exit 1; \
+	fi
+	@echo "Running K8s Doctor model routing experiment (routing ON vs OFF)..."
+	cd $(K8S_AGENT_DIR) && $(K8S_PYTHON_ABS) evals/run_routing_experiment.py
+
 # ── lint ──────────────────────────────────────────────────────────────────────
 lint:
 	$(LOG_VENV)/bin/ruff check .
@@ -173,14 +271,22 @@ help:
 	@echo "  ─────────────────────────────────────────────────────────────"
 	@echo "  make setup           Bootstrap all agent venvs (run after clone)"
 	@echo "  make setup-log       Bootstrap log-intelligence venv only"
-	@echo "  make setup-slack-bot     Bootstrap slack-incident-bot venv only"
-	@echo "  make setup-pr-reviewer   Bootstrap pr-reviewer venv only"
+	@echo "  make setup-slack-bot         Bootstrap slack-incident-bot venv only"
+	@echo "  make setup-pr-reviewer       Bootstrap pr-reviewer venv only"
+	@echo "  make setup-k8s-doctor        Bootstrap k8s-doctor venv only"
+	@echo "  make setup-mcp-prometheus    Bootstrap mcp-prometheus venv only"
+	@echo "  make cluster-up              Create kind cluster + deploy broken fixtures"
+	@echo "  make cluster-down            Delete kind cluster"
+	@echo "  make run-k8s-doctor          Diagnose CrashLoopBackOff in doctor-lab"
+	@echo "  make eval-k8s-doctor         Run offline eval suite (no cluster required)"
+	@echo "  make routing-experiment      Run model routing experiment (ON vs OFF)"
 	@echo ""
 	@echo "  Testing"
 	@echo "  ─────────────────────────────────────────────────────────────"
 	@echo "  make test            Run ALL unit tests (all agents)"
 	@echo "  make test-log        Run log-intelligence tests only"
-	@echo "  make test-slack-bot      Run slack-incident-bot tests only"
+	@echo "  make test-slack-bot          Run slack-incident-bot tests only"
+	@echo "  make test-k8s-doctor         Run k8s-doctor tests only"
 	@echo ""
 	@echo "  Evaluation"
 	@echo "  ─────────────────────────────────────────────────────────────"
