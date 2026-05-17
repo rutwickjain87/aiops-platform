@@ -1,0 +1,1 @@
+A static website hosted on S3 with CloudFront CDN in front. The site is public. No compute, no database. us-east-1. Call it "mysite". Production environment.

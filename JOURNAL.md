@@ -772,3 +772,142 @@ git push
 ```
 
 ---
+
+## Day 8 — SAST Auto-Fixer + IaC Generator
+
+**Date:** 17 May 2026
+
+---
+
+### Concept: SAST Auto-Fixer
+
+#### What is SAST?
+
+**Static Application Security Testing** — analysing source code *without running it* to find security vulnerabilities. Think of it as a spell-checker, but for security bugs. It reads your code, matches patterns against known vulnerability signatures, and flags things like hardcoded secrets, SQL injection, eval injection, path traversal, etc.
+
+**Semgrep** is the scanning tool used here. It uses rules written in YAML — each rule says "if the code looks like this pattern, it's probably vulnerable." There are thousands of community rules covering OWASP Top 10, CWEs, and language-specific pitfalls.
+
+#### What the Agent Does
+
+Without the agent, the workflow is manual:
+
+```
+Engineer runs Semgrep → reads 50 findings → picks one → reads the code →
+understands the context → writes a fix → tests it → opens a PR
+```
+
+With the agent:
+
+```
+Agent runs Semgrep → picks the highest-priority finding → reads the file →
+generates a fix → tests it in a sandbox → if tests pass, opens a PR
+```
+
+The agent handles the boring, repetitive part (read → understand → fix → verify). The engineer reviews the PR like any other code change.
+
+#### Key Concepts
+
+**Sandboxed validation** is the most important safety property. The agent generates code and runs it — dangerous if the network is open or the filesystem is uncontrolled. The sandbox contract:
+- Docker container with `--network=none` (no internet, no exfiltration)
+- Tests run against the *fixed* code, not the original
+- If tests fail, the agent retries the fix up to 2×; if still failing, it stops and does not open a PR
+
+**Why cap retries at 2?** Beyond 2 attempts the LLM is usually confused about context or the fix is genuinely ambiguous. Opening a bad PR is worse than opening no PR. Hard stop is the right call.
+
+**`git diff` as a tool, not `read → modify → write`.** The agent uses `git diff` to see what changed. The diff *is* the artifact — it's what goes into the PR and what you review. Makes fixes auditable without reading the whole file.
+
+**Idempotency** — the PR comment is tagged `<!-- sast-autofix:v1 -->`. If the same finding is re-scanned and the PR already exists, the agent updates the comment rather than opening a duplicate.
+
+**Target: OWASP WebGoat** — a deliberately vulnerable Java web application maintained by OWASP. Standard "shoot at this" target for security tooling. Has real intentional vulnerabilities: SQL injection, XSS, path traversal, insecure deserialization, hardcoded credentials. Semgrep finds dozens of findings immediately.
+
+#### Tools
+
+| Tool | What it does |
+|---|---|
+| `clone_repo` | `git clone` the target into a temp dir |
+| `run_semgrep` | Runs `semgrep --json` with OWASP ruleset, returns structured findings |
+| `read_file` | Reads the vulnerable file for context |
+| `write_file` | Writes the proposed fix |
+| `git_diff` | Shows what changed (the patch) |
+| `run_tests_in_docker` | `docker run --network=none` — validates the fix in isolation |
+| `open_pr` | `git commit + push + PyGithub PR API` |
+
+#### LangGraph Workflow
+
+```mermaid
+flowchart TD
+    START([START]) --> scan
+
+    scan["scan\nrun Semgrep on target repo\nget structured findings JSON"]
+    pick["pick\nselect top finding\nby severity P1 → P2 → P3"]
+    read["read\nread the vulnerable file\nunderstand context"]
+    fix["fix\nLLM generates patch\ngit diff shows the change"]
+    validate["validate\nrun tests inside Docker\n--network=none sandbox"]
+    open_pr["open_pr\ngit commit + push\nopen GitHub PR with diff"]
+    END_NODE([END])
+
+    retry{"tests pass?"}
+    retrycount{"retries < 2?"}
+    stop["stop\ndo not open PR\nlog failure"]
+
+    scan --> pick
+    pick --> read
+    read --> fix
+    fix --> validate
+    validate --> retry
+    retry -- yes --> open_pr
+    open_pr --> END_NODE
+    retry -- no --> retrycount
+    retrycount -- yes --> fix
+    retrycount -- no --> stop
+    stop --> END_NODE
+
+    style scan fill:#4a90d9,color:#fff
+    style pick fill:#4a90d9,color:#fff
+    style read fill:#4a90d9,color:#fff
+    style fix fill:#7b68ee,color:#fff
+    style validate fill:#e8834a,color:#fff
+    style open_pr fill:#5aab61,color:#fff
+    style stop fill:#c0392b,color:#fff
+    style retry fill:#f0c040,color:#333
+    style retrycount fill:#f0c040,color:#333
+```
+
+#### Why This is Senior Signal
+
+Most demos show Semgrep *finding* bugs. Few show an agent that *fixes* them, validates the fix in a sandbox, and opens a clean PR. The combination of sandboxed execution + retry logic + idempotent PRs is what separates a toy from something production-adjacent.
+
+---
+
+### What We Built
+
+A full LangGraph pipeline (`scan → pick → read_ctx → fix → validate → open_pr`) that autonomously finds a security vulnerability in a Python Flask app, generates a fix via Claude, validates it in a Docker sandbox, commits it to a fix branch, and opens a GitHub PR — with a retry loop capped at 2 attempts if tests fail.
+
+**Deliberately vulnerable target app** (`targets/vulnerable_app/`) with five planted CWEs: command injection (`shell=True`), SQL injection (string concatenation), path traversal, eval injection, and hardcoded credentials. Semgrep's `p/python` ruleset finds them all.
+
+**Docker sandbox validation** runs `pytest` inside a `--network=none --read-only` container. The key constraints that required fixing: pytest's cache writer needs `-p no:cacheprovider` to avoid writing to the read-only mount, and SQLite needs an `APP_DB_PATH` env var pointing at `/tmp/app.db` (writable tmpfs) instead of `/app/app.db` (read-only).
+
+**LLM output stripping** — Claude occasionally prepends chain-of-thought reasoning before the Python code. A `_strip_non_python_prefix()` regex finds the first valid Python token and trims everything before it. The system prompt was also tightened to demand the first character of the response be the first character of the file.
+
+**GitHub PR creation** went through multiple iterations before landing on the right approach. The full journey:
+- PyGithub v2 → 403 (sends `X-GitHub-Api-Version: 2022-11-28` header, which triggers stricter PAT validation)
+- urllib with `Accept: application/vnd.github+json` → 403 (same header triggering effect)
+- `requests` with only `Authorization: token` → 403 (Python's env had a stale shell token)
+- `curl` subprocess (confirmed working from terminal) → 403 from subprocess (same root cause)
+- Root fix: `load_dotenv(override=True)` — without `override=True`, python-dotenv does **not** replace env vars already set in the shell (e.g. from `.zshrc`). The shell `$GITHUB_TOKEN` was a stale token; the `.env` file had the correct one. Once Python read the right token, `curl` via subprocess succeeded.
+
+**git push `--force`** — changed from `--force-with-lease` because the agent's ephemeral fix branches don't track a remote ref on first push, making `--force-with-lease` fail with "stale info."
+
+**`git index.lock` files** — the Docker sandbox and mounted-volume git operations left lock files that blocked subsequent git commands. These need `rm -f .git/index.lock` from the host terminal; the sandbox can't unlink them due to mount permissions.
+
+---
+
+### Hardest Bugs
+
+**1. SQLite database path (kept recurring)** — `db.py` originally hardcoded `sqlite3.connect("app.db")`, which tried to write inside the read-only Docker mount. Fixed by having `db.py` read `APP_DB_PATH` from env and `docker_tool.py` pass `-e APP_DB_PATH=/tmp/app.db`. This fix kept disappearing because `git checkout` on a new branch would restore the old `db.py` — the fix had to be committed to `main` in the vulnerable_app repo.
+
+**2. `load_dotenv` without `override=True`** — the stealthiest bug. Everything looked correct (token had `repo` scope, curl worked from terminal, requests looked identical to curl) but Python subprocess was using a different, stale token from the shell environment. `load_dotenv()` silently loses to pre-existing env vars. Always use `override=True` when the `.env` file is the source of truth.
+
+**3. LLM reasoning text in fixed file** — Claude's chain-of-thought ("Here is the fixed code: ...") was written verbatim as the first line of `app.py`, causing an immediate `SyntaxError`. The strip helper and a stronger system prompt ("The VERY FIRST character of your response MUST be the first character of the fixed Python file") fixed this.
+
+---

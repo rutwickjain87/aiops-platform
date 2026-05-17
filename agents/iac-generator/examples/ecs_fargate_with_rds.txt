@@ -1,0 +1,1 @@
+A containerised Python web application running on ECS Fargate behind an Application Load Balancer. The app needs a PostgreSQL database on RDS. Use us-east-1. Two availability zones for high availability. The app listens on port 8080. Call it "myapi". Dev environment.

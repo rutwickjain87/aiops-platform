@@ -28,6 +28,9 @@
 #   make run-mcp-prometheus      # start Prometheus MCP server (stdio)
 #   make eval-k8s-doctor         # run offline eval suite (no cluster required)
 #   make routing-experiment      # run model routing experiment (ON vs OFF)
+#   make setup-sast-fix          # bootstrap sast-auto-fix venv only
+#   make scan-sast               # scan target with Semgrep (no fix)
+#   make run-sast-fix            # scan + fix + validate + open PR
 
 # ── Venv paths ────────────────────────────────────────────────────────────────
 LOG_AGENT_DIR   := agents/log-intelligence
@@ -57,6 +60,16 @@ MCP_PROM_DIR    := services/mcp-prometheus
 MCP_PROM_VENV   := $(MCP_PROM_DIR)/.venv
 MCP_PROM_PYTHON_ABS := $(CURDIR)/$(MCP_PROM_VENV)/bin/python
 
+SAST_AGENT_DIR  := agents/sast-auto-fix
+SAST_VENV       := $(SAST_AGENT_DIR)/.venv
+SAST_PYTHON_ABS := $(CURDIR)/$(SAST_VENV)/bin/python
+
+IAC_AGENT_DIR   := agents/iac-generator
+IAC_VENV        := $(IAC_AGENT_DIR)/.venv
+IAC_PYTHON_ABS  := $(CURDIR)/$(IAC_VENV)/bin/python
+IAC_PROMPT      ?= "A containerised web app on AWS ECS Fargate with an ALB and a Postgres RDS database"
+IAC_OUTPUT      ?= $(IAC_AGENT_DIR)/iac-output
+
 K8S_NAMESPACE   ?= doctor-lab
 K8S_RESOURCE    ?= crashloop-demo
 K8S_SYMPTOM     ?= CrashLoopBackOff
@@ -70,9 +83,10 @@ RESULTS_DIR     := evals/results
 
 .PHONY: eval test test-log test-slack-bot test-pr-reviewer test-k8s-doctor lint fmt \
         setup setup-log setup-slack-bot setup-pr-reviewer setup-k8s-doctor setup-mcp-prometheus \
-        obs-up obs-down obs-logs run-slack-bot run-pr-reviewer \
+        setup-sast-fix setup-iac-gen obs-up obs-down obs-logs run-slack-bot run-pr-reviewer \
         cluster-up cluster-down run-k8s-doctor run-mcp-prometheus \
-        eval-k8s-doctor routing-experiment help
+        eval-k8s-doctor routing-experiment scan-sast run-sast-fix \
+        run-iac-gen run-iac-gen-no-validate help
 
 .DEFAULT_GOAL := help
 
@@ -253,6 +267,51 @@ routing-experiment:
 	fi
 	@echo "Running K8s Doctor model routing experiment (routing ON vs OFF)..."
 	cd $(K8S_AGENT_DIR) && $(K8S_PYTHON_ABS) evals/run_routing_experiment.py
+
+setup-sast-fix:
+	@echo "Setting up sast-auto-fix venv..."
+	cd $(SAST_AGENT_DIR) && $(UV) venv .venv && $(UV) pip install -r requirements.txt --python .venv/bin/python
+	@echo "SAST Auto-Fixer venv ready at $(SAST_VENV)"
+
+scan-sast:
+	@if [ ! -f "$(SAST_PYTHON_ABS)" ]; then \
+	    echo "⚠️  sast-auto-fix venv not found — run: make setup-sast-fix"; \
+	    exit 1; \
+	fi
+	@echo "Scanning target with Semgrep (no fix)..."
+	cd $(SAST_AGENT_DIR) && $(SAST_PYTHON_ABS) auto_fix.py --scan-only
+
+run-sast-fix:
+	@if [ ! -f "$(SAST_PYTHON_ABS)" ]; then \
+	    echo "⚠️  sast-auto-fix venv not found — run: make setup-sast-fix"; \
+	    exit 1; \
+	fi
+	@echo "Running SAST Auto-Fixer (scan → fix → validate → PR)..."
+	cd $(SAST_AGENT_DIR) && $(SAST_PYTHON_ABS) auto_fix.py
+
+# ── IaC Generator ─────────────────────────────────────────────────────────────
+setup-iac-gen:
+	@echo "Setting up iac-generator venv..."
+	cd $(IAC_AGENT_DIR) && python3 -m venv .venv
+	cd $(IAC_AGENT_DIR) && $(IAC_PYTHON_ABS) -m pip install --quiet --upgrade pip
+	cd $(IAC_AGENT_DIR) && $(IAC_PYTHON_ABS) -m pip install --quiet -r requirements.txt
+	@echo "✅  iac-generator venv ready. Copy .env.example → .env and fill in ANTHROPIC_API_KEY"
+
+run-iac-gen:
+	@if [ ! -f "$(IAC_PYTHON_ABS)" ]; then \
+	    echo "⚠️  iac-generator venv not found — run: make setup-iac-gen"; \
+	    exit 1; \
+	fi
+	@echo "Running IaC Generator (clarify → plan → generate → validate)..."
+	cd $(IAC_AGENT_DIR) && $(IAC_PYTHON_ABS) generate.py $(IAC_PROMPT) --output $(IAC_OUTPUT)
+
+run-iac-gen-no-validate:
+	@if [ ! -f "$(IAC_PYTHON_ABS)" ]; then \
+	    echo "⚠️  iac-generator venv not found — run: make setup-iac-gen"; \
+	    exit 1; \
+	fi
+	@echo "Running IaC Generator (no terraform validate)..."
+	cd $(IAC_AGENT_DIR) && $(IAC_PYTHON_ABS) generate.py $(IAC_PROMPT) --output $(IAC_OUTPUT) --no-validate
 
 # ── lint ──────────────────────────────────────────────────────────────────────
 lint:
