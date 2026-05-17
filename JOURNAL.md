@@ -911,3 +911,110 @@ A full LangGraph pipeline (`scan → pick → read_ctx → fix → validate → 
 **3. LLM reasoning text in fixed file** — Claude's chain-of-thought ("Here is the fixed code: ...") was written verbatim as the first line of `app.py`, causing an immediate `SyntaxError`. The strip helper and a stronger system prompt ("The VERY FIRST character of your response MUST be the first character of the fixed Python file") fixed this.
 
 ---
+
+## Day 9 — IaC Generator
+
+**Date:** 18 May 2026
+
+---
+
+### Concept: IaC Generator
+
+#### What is Infrastructure as Code?
+
+**Infrastructure as Code (IaC)** means describing your cloud resources — VMs, networks, databases, load balancers, IAM roles — in text files that are version-controlled, reviewed, and applied deterministically. Terraform (HCL, cloud-agnostic, declarative state) is the dominant tool. The alternative, Pulumi, uses real programming languages (Python/TypeScript/Go) over the same declarative model.
+
+The problem with writing IaC manually: it's repetitive, error-prone, and requires deep knowledge of provider-specific resource schemas. A developer who just wants "an ECS service behind an ALB with a Postgres RDS instance" has to know 8+ resource types, their dependency order, and ~40 required arguments — before writing a line of application code.
+
+**The generator agent** takes plain English and produces ready-to-validate Terraform — correct argument names, proper resource references, security group rules, IAM roles, and CIDR allocation — in one shot.
+
+#### What the Agent Does
+
+```
+User: "A containerised web app on ECS Fargate with ALB and Postgres"
+Agent: generates providers.tf, variables.tf, networking.tf, iam.tf,
+       alb.tf, database.tf, compute.tf, outputs.tf
+       → terraform validate: ✅ Success
+```
+
+#### Key Design Decisions
+
+**Planning before generating** is the single biggest quality improvement. Without an explicit resource dependency list, the LLM generates resources in random order and forgets dependencies (e.g. `aws_db_subnet_group` before `aws_subnet`). Forcing a `plan` node that outputs an ordered list — VPC → subnets → security groups → ALB → ECS → RDS — gives the `generate` node a clear contract to follow.
+
+**HCL reference templates as grounding** — four `.tf` files in `templates/` contain correct argument names and structure for the most common AWS resources. These are loaded into the system prompt before generation. Without grounding, the LLM invents argument names (e.g. `public_subnets` instead of the correct `subnet_ids`), which causes `terraform validate` errors.
+
+**`terraform validate` without applying** — the AWS Terraform provider embeds its full resource schema. `terraform validate` checks syntax, argument names, types, and required fields against this schema — without making any cloud API calls and without needing credentials. The only internet-required step is `terraform init -backend=false`, which downloads the provider plugin once (~50MB). After that, validation is fully offline.
+
+**Retry on validation errors** — `terraform validate` returns structured errors: file, line, and argument name. These are fed verbatim back to the `generate` node as context for a targeted fix. Same conditional retry edge as the SAST agent.
+
+**No apply in the agent** — the agent generates and validates. Applying is a human decision, made after `terraform plan` is reviewed. This is the right default for an AI agent touching production infrastructure.
+
+#### LangGraph Workflow
+
+```mermaid
+flowchart TD
+    START([START]) --> clarify
+
+    clarify["clarify\nextract structured requirements\nfrom plain-English prompt"]
+    plan["plan\nbuild ordered resource\ndependency list"]
+    generate["generate\nwrite HCL for each .tf file\nusing templates as grounding"]
+    validate["validate\nterraform init + validate\nin Docker or local binary"]
+    output["output\nwrite files to disk\nprint next steps"]
+
+    retry{"valid?"}
+    retrycount{"retries < max?"}
+
+    clarify --> plan
+    plan --> generate
+    generate --> validate
+    validate --> retry
+    retry -- yes --> output
+    output --> END_NODE([END])
+    retry -- no --> retrycount
+    retrycount -- yes --> generate
+    retrycount -- no --> output
+
+    style clarify fill:#4a90d9,color:#fff
+    style plan fill:#4a90d9,color:#fff
+    style generate fill:#7b68ee,color:#fff
+    style validate fill:#e8834a,color:#fff
+    style output fill:#5aab61,color:#fff
+    style retry fill:#f0c040,color:#333
+    style retrycount fill:#f0c040,color:#333
+```
+
+#### Why This is Senior Signal
+
+Terraform generation is a common demo. What makes this non-trivial: the explicit planning step that enforces dependency order, the grounding via reference templates, and the terraform validate loop that turns LLM output into something that would actually pass `terraform plan` against a real AWS account. Most LLM-generated Terraform fails on the first `init` — this one passed on first run.
+
+---
+
+### What We Built
+
+A 5-node LangGraph pipeline that takes a natural-language infrastructure description and produces validated, ready-to-apply Terraform HCL. On the first real run:
+
+```
+Prompt  : "A containerised web app on AWS ECS Fargate with an ALB and a Postgres RDS database"
+Result  : ✅  Terraform generated and validated (103.8s)
+Files   : providers.tf (158B) · variables.tf (1.2KB) · networking.tf (5KB)
+          iam.tf (1KB) · alb.tf (1.2KB) · database.tf (878B)
+          compute.tf (2.5KB) · outputs.tf (893B)
+```
+
+**`clarify` node** extracts structured requirements into a JSON dict: `compute=ecs_fargate`, `database=rds_postgres`, `load_balancer=alb`, `networking=public_private`, `az_count=2`, `region=us-east-1`. This gives every downstream node a typed contract instead of the raw prompt.
+
+**`plan` node** produces an ordered resource list grouped by file. The ordering constraint (dependencies first) is the critical instruction — it prevents the LLM from referencing resources that haven't been declared yet.
+
+**`generate` node** writes complete HCL for all 8 files in one LLM call. The system prompt includes the structured requirements, the ordered resource list, and the HCL reference templates. On retry, validation errors are appended so the LLM can make targeted fixes rather than regenerating from scratch.
+
+**`validate` node** runs `terraform init -backend=false` then `terraform validate`. Uses local `terraform` binary if installed, falls back to `docker run hashicorp/terraform:1.7.5`. No AWS credentials required.
+
+**`output` node** writes `.tf` files to the specified output directory and prints the `terraform init / plan / apply` next steps.
+
+**Terraform validation fallback chain**: local binary → Docker → informative error (install one of the above).
+
+**`--no-validate` flag** skips the validate step for fast iteration on the prompt without waiting for provider download.
+
+---
+
+
