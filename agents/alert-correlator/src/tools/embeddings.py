@@ -1,33 +1,42 @@
 """
-Voyage AI embedding client for alert text.
-Model: voyage-3-lite (1024 dims, optimised for technical text, cheapest tier).
-Batches up to 128 inputs per API call.
+Local embedding client for alert text using sentence-transformers.
+Model: all-MiniLM-L6-v2 (384 dims, ~80MB, CPU-only, no API key required).
+
+Why this model:
+  - Runs entirely locally — no API calls, no cost per alert
+  - 384 dims is small enough for fast IVFFlat search in pgvector
+  - MiniLM is trained on 1B sentence pairs — good for short technical strings
+  - First call triggers a one-time ~80MB download to ~/.cache/huggingface/
+
+Swap the MODEL constant to upgrade (e.g. 'BAAI/bge-base-en-v1.5' for 768 dims,
+better quality but requires updating init.sql vector() dimension to match).
 """
-import os
 import logging
 from functools import lru_cache
 
-import voyageai
+from sentence_transformers import SentenceTransformer
 
 log = logging.getLogger(__name__)
 
-MODEL = "voyage-3-lite"  # 1024 dims, good for short technical strings
-BATCH_SIZE = 128          # Voyage API limit per call
+MODEL = "all-MiniLM-L6-v2"   # 384 dims — change init.sql vector() if you swap
+EMBEDDING_DIM = 384            # must match vector(<dim>) in init.sql
+BATCH_SIZE = 64                # sentence-transformers handles batching internally
 
 
 @lru_cache(maxsize=1)
-def _client() -> voyageai.Client:
-    api_key = os.environ.get("VOYAGE_API_KEY")
-    if not api_key:
-        raise RuntimeError("VOYAGE_API_KEY not set")
-    return voyageai.Client(api_key=api_key)
+def _model() -> SentenceTransformer:
+    """Load model once and cache. First call downloads ~80MB to ~/.cache/huggingface/."""
+    log.info("Loading sentence-transformers model '%s' (first call may download ~80MB)...", MODEL)
+    m = SentenceTransformer(MODEL)
+    log.info("Model loaded. Embedding dim: %d", m.get_sentence_embedding_dimension())
+    return m
 
 
 def alert_to_text(alert: dict) -> str:
     """
     Convert an AlertManager alert dict to a single string for embedding.
     Format: "<alertname> severity=<sev> <label_kv_pairs> | <summary> | <description>"
-    This gives Voyage AI rich signal without overwhelming it.
+    Packs the most discriminating signal into the fewest tokens.
     """
     labels = alert.get("labels", {})
     annotations = alert.get("annotations", {})
@@ -53,15 +62,15 @@ def alert_to_text(alert: dict) -> str:
         parts.append(summary)
     if description:
         parts.append("|")
-        parts.append(description[:300])  # cap at 300 chars — Voyage context is limited
+        parts.append(description[:300])
 
     return " ".join(parts)
 
 
 def embed_alerts(alerts: list[dict]) -> list[list[float]]:
     """
-    Embed a list of alert dicts. Returns parallel list of embedding vectors.
-    Batches automatically.
+    Embed a list of alert dicts. Returns a parallel list of embedding vectors.
+    All computation is local — no network calls.
     """
     texts = [alert_to_text(a) for a in alerts]
     return embed_texts(texts)
@@ -69,14 +78,18 @@ def embed_alerts(alerts: list[dict]) -> list[list[float]]:
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed a list of raw text strings. Returns parallel list of embedding vectors."""
-    client = _client()
-    embeddings = []
-    for i in range(0, len(texts), BATCH_SIZE):
-        batch = texts[i : i + BATCH_SIZE]
-        log.debug("Embedding batch %d-%d via Voyage AI", i, i + len(batch))
-        result = client.embed(batch, model=MODEL, input_type="query")
-        embeddings.extend(result.embeddings)
-    return embeddings
+    if not texts:
+        return []
+    model = _model()
+    log.debug("Embedding %d texts locally with %s...", len(texts), MODEL)
+    vectors = model.encode(
+        texts,
+        batch_size=BATCH_SIZE,
+        show_progress_bar=False,
+        normalize_embeddings=True,   # cosine sim = dot product after L2 norm
+        convert_to_numpy=True,
+    )
+    return [v.tolist() for v in vectors]
 
 
 def embed_single(alert: dict) -> list[float]:

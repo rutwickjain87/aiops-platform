@@ -101,53 +101,59 @@ def query_similar_alerts(
     Return alerts within the time window whose embedding cosine similarity
     to `embedding` is >= threshold, ordered by similarity descending.
     """
+    # Use a subquery so the similarity alias is available in the outer WHERE.
+    # HAVING without GROUP BY is invalid in PostgreSQL — subquery is the fix.
     if exclude_fingerprint:
         sql = """
-            SELECT
-                id,
-                fingerprint,
-                name,
-                severity,
-                labels,
-                annotations,
-                started_at,
-                received_at,
-                status,
-                1 - (embedding <=> %s::vector) AS similarity
-            FROM alerts
-            WHERE
-                received_at >= NOW() - INTERVAL '%s minutes'
-                AND status = 'firing'
-                AND embedding IS NOT NULL
-                AND fingerprint != %s
-            HAVING 1 - (embedding <=> %s::vector) >= %s
+            SELECT * FROM (
+                SELECT
+                    id,
+                    fingerprint,
+                    name,
+                    severity,
+                    labels,
+                    annotations,
+                    started_at,
+                    received_at,
+                    status,
+                    1 - (embedding <=> %s::vector) AS similarity
+                FROM alerts
+                WHERE
+                    received_at >= NOW() - INTERVAL '%s minutes'
+                    AND status = 'firing'
+                    AND embedding IS NOT NULL
+                    AND fingerprint != %s
+            ) sub
+            WHERE similarity >= %s
             ORDER BY similarity DESC
             LIMIT %s
         """
-        params = (embedding, window_minutes, exclude_fingerprint, embedding, threshold, limit)
+        params = (embedding, window_minutes, exclude_fingerprint, threshold, limit)
     else:
         sql = """
-            SELECT
-                id,
-                fingerprint,
-                name,
-                severity,
-                labels,
-                annotations,
-                started_at,
-                received_at,
-                status,
-                1 - (embedding <=> %s::vector) AS similarity
-            FROM alerts
-            WHERE
-                received_at >= NOW() - INTERVAL '%s minutes'
-                AND status = 'firing'
-                AND embedding IS NOT NULL
-            HAVING 1 - (embedding <=> %s::vector) >= %s
+            SELECT * FROM (
+                SELECT
+                    id,
+                    fingerprint,
+                    name,
+                    severity,
+                    labels,
+                    annotations,
+                    started_at,
+                    received_at,
+                    status,
+                    1 - (embedding <=> %s::vector) AS similarity
+                FROM alerts
+                WHERE
+                    received_at >= NOW() - INTERVAL '%s minutes'
+                    AND status = 'firing'
+                    AND embedding IS NOT NULL
+            ) sub
+            WHERE similarity >= %s
             ORDER BY similarity DESC
             LIMIT %s
         """
-        params = (embedding, window_minutes, embedding, threshold, limit)
+        params = (embedding, window_minutes, threshold, limit)
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(sql, params)

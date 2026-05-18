@@ -339,7 +339,7 @@ setup-alert-correlator:
 	cd $(CORR_AGENT_DIR) && python3 -m venv .venv
 	cd $(CORR_AGENT_DIR) && $(CORR_PYTHON_ABS) -m pip install --quiet --upgrade pip
 	cd $(CORR_AGENT_DIR) && $(CORR_PYTHON_ABS) -m pip install --quiet -r requirements.txt
-	@echo "✅  alert-correlator venv ready. Copy .env.example → .env and fill in keys"
+	@echo "✅  alert-correlator venv ready. Copy .env.example → .env (no Voyage AI key needed — embeddings are local)"
 
 correlator-up:
 	@echo "Starting pgvector container..."

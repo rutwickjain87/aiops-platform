@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS alerts (
     annotations JSONB NOT NULL DEFAULT '{}',
     started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    embedding   vector(1024),                  -- voyage-3-lite: 1024 dims
+    embedding   vector(384),                   -- all-MiniLM-L6-v2: 384 dims
     status      TEXT NOT NULL DEFAULT 'firing' -- firing | resolved
 );
 
