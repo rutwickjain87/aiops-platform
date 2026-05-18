@@ -35,16 +35,27 @@ def _model() -> SentenceTransformer:
 def alert_to_text(alert: dict) -> str:
     """
     Convert an AlertManager alert dict to a single string for embedding.
-    Format: "<alertname> severity=<sev> <label_kv_pairs> | <summary> | <description>"
-    Packs the most discriminating signal into the fewest tokens.
+
+    Strategy: repeat the high-signal correlation labels (namespace, service, node)
+    twice so the model weights them more heavily. MiniLM treats token frequency
+    as importance signal — repeating shared labels pulls correlated alerts closer
+    in embedding space without needing a domain-tuned model.
+
+    Format:
+      "<namespace> <service> <alertname> severity=<sev> <label_kv_pairs>
+       | <summary> | <description[:200]>
+       | namespace=<ns> service=<svc>"   ← repeated for emphasis
     """
     labels = alert.get("labels", {})
     annotations = alert.get("annotations", {})
 
     alertname = labels.get("alertname", "unknown")
     severity = labels.get("severity", "info")
+    namespace = labels.get("namespace", "")
+    service = labels.get("service", labels.get("job", ""))
+    node = labels.get("node", "")
 
-    # Extra labels (namespace, pod, service, node, etc.) — sorted for stability
+    # All labels except alertname/severity (already prominent in prefix)
     extra = " ".join(
         f"{k}={v}"
         for k, v in sorted(labels.items())
@@ -54,7 +65,18 @@ def alert_to_text(alert: dict) -> str:
     summary = annotations.get("summary", "")
     description = annotations.get("description", "")
 
-    parts = [f"{alertname} severity={severity}"]
+    # Prefix: high-signal location identifiers first
+    prefix_parts = []
+    if namespace:
+        prefix_parts.append(namespace)
+    if service:
+        prefix_parts.append(service)
+    if node:
+        prefix_parts.append(node)
+    prefix_parts.append(alertname)
+    prefix_parts.append(f"severity={severity}")
+
+    parts = [" ".join(prefix_parts)]
     if extra:
         parts.append(extra)
     parts.append("|")
@@ -62,7 +84,19 @@ def alert_to_text(alert: dict) -> str:
         parts.append(summary)
     if description:
         parts.append("|")
-        parts.append(description[:300])
+        parts.append(description[:200])
+
+    # Repeat shared-scope labels at the end for emphasis
+    emphasis = []
+    if namespace:
+        emphasis.append(f"namespace={namespace}")
+    if service:
+        emphasis.append(f"service={service}")
+    if node:
+        emphasis.append(f"node={node}")
+    if emphasis:
+        parts.append("|")
+        parts.append(" ".join(emphasis))
 
     return " ".join(parts)
 
