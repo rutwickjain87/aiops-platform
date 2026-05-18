@@ -1017,4 +1017,181 @@ Files   : providers.tf (158B) · variables.tf (1.2KB) · networking.tf (5KB)
 
 ---
 
+## Day 10 — Alert Correlator + Incident Commander
+
+**Date:** 18 May 2026
+
+---
+
+### What We Built
+
+**Alert Correlator** (`agents/alert-correlator/`) — a LangGraph pipeline that ingests AlertManager-format alert payloads, embeds them with Voyage AI, finds similar alerts in pgvector, clusters them with union-find, and generates structured incident records using Claude Haiku.
+
+**Incident Commander** (`agents/incident-commander/`) — a 4-agent CrewAI team that handles the full incident response lifecycle: Triage, Investigation, Mitigation (with human approval gate), and Communication (Slack card).
+
+**Synthetic alert generator** (`synthetic/generate_alerts.py`) — produces realistic correlated alert batches across four scenarios: OOM cascade, node pressure, security incident, and noise. Used for testing the correlator without a live AlertManager.
+
+---
+
+### Concept: Alert Correlator
+
+#### The Problem
+
+A modern Kubernetes platform fires many alerts simultaneously during an incident. An OOM cascade might fire `KubernetesContainerOOMKilled`, `KubernetesPodRestartingTooMuch`, `HighErrorRate`, and `HighLatencyP99` at the same time — four separate PagerDuty pages, four separate on-call wakeups. These are one incident, not four.
+
+Alert correlation is the process of identifying which alerts are caused by the same underlying event and grouping them into a single incident.
+
+#### How pgvector Makes This Work
+
+**Vector similarity** turns the semantic content of alerts into a geometry problem. Two alert texts are "similar" if their embedding vectors point in roughly the same direction in 1024-dimensional space (Voyage AI's `voyage-3-lite` output dimension).
+
+The key insight: an OOMKilled alert and a HighErrorRate alert in the same namespace, fired within 30 minutes, will have similar embeddings because they share: the namespace name, service name, and incident vocabulary. A CertificateExpiringSoon alert from a different namespace will have a very different embedding — it won't cluster with the OOM group.
+
+**pgvector's cosine distance operator** (`<=>`) makes this query fast:
+```sql
+1 - (embedding <=> query_vector::vector) >= 0.85
+```
+This returns all alerts within the time window whose cosine similarity to the query alert is ≥ 0.85 — in a single indexed query.
+
+**IVFFlat index** (`CREATE INDEX USING ivfflat`) makes this fast at scale: approximate nearest neighbours search with `lists=100` (100 Voronoi cells). For <1M rows this has negligible accuracy loss and orders-of-magnitude speed improvement over exact search.
+
+#### Why Voyage AI for Embeddings
+
+Voyage AI's `voyage-3-lite` was chosen over OpenAI text-embedding-3-small for two reasons:
+1. **Technical domain tuning** — Voyage AI models are trained to embed technical and code content. Alert text (alertnames, Kubernetes labels, PromQL metric names) is technical jargon that generic embeddings struggle with.
+2. **Cost** — voyage-3-lite is significantly cheaper per token than OpenAI's embedding models.
+
+The embedding text format packs the most signal into the fewest tokens: `alertname severity=critical namespace=payments pod=payments-api-7d4f | <summary> | <description>`. Label key-value pairs are the primary clustering signal; description adds semantic richness.
+
+#### LangGraph Pipeline
+
+```
+raw_alerts
+    │
+    ▼
+  ingest ── validate + normalise alerts, derive missing fingerprints
+    │
+    ▼
+  embed ── Voyage AI batch embed → upsert into pgvector
+    │
+    ▼
+  query_similar ── for each alert: cosine search, time-bounded, threshold 0.85
+    │
+    ▼
+  cluster ── union-find: merge overlapping similarity groups into clusters
+    │
+    ▼
+  emit_incident ── Claude Haiku: title + root cause + summary per cluster → persist to DB
+    │
+    ▼
+  structured incidents
+```
+
+All errors are accumulated (non-fatal) — the pipeline completes even if some alerts fail to embed or some DB upserts fail.
+
+#### Union-Find for Clustering
+
+The challenge: similarity groups can overlap. Alert A is similar to B, and B is similar to C, but A and C might not be directly similar. They should still be in the same cluster (transitive closure).
+
+Union-Find solves this in near-linear time:
+- For each similarity group: `union(anchor_id, similar_id)` for all similar alerts
+- After all unions: group by `find(id)` (the root of each component)
+- Filter: drop clusters smaller than `MIN_CLUSTER_SIZE` (default: 2) to discard isolated noise
+
+This runs in O(α(n)) — essentially O(1) per union/find — which is why it's used in pgvector correlation problems rather than something like DBSCAN.
+
+---
+
+### Concept: Incident Commander
+
+#### The Problem
+
+Once an incident is identified, the response involves four distinct roles with different cognitive requirements:
+- **Triage**: fast pattern recognition, no deep analysis yet — "is this a cascade or isolated?"
+- **Investigation**: systematic debugging — logs + metrics → hypothesis
+- **Mitigation**: change management — propose → approve → execute → verify
+- **Communication**: technical translation — dense engineering context → clear Slack card
+
+These roles can partially parallelise: triage and investigation can run simultaneously. Mitigation must wait for both. Communication must wait for mitigation.
+
+#### Why CrewAI (not LangGraph)
+
+LangGraph is excellent for deterministic pipelines (Alert Correlator) and single-agent loops with explicit state (K8s Doctor). CrewAI is better here because:
+- Each agent has a distinct **role/goal/backstory** that shapes its reasoning style
+- The task context system handles inter-agent information sharing without explicit state management
+- It models the incident response as what it is: a team, not a pipeline
+
+#### The 4 Agents
+
+**Triage Agent** (Sonnet) — reads pod status and events, classifies severity and blast radius. No remediation. Fast. Tools: `get_pods_in_namespace`, `get_events`, `get_node_status`.
+
+**Investigator** (Sonnet) — digs into root cause with the full tool set: pod logs, kubectl describe, Prometheus queries (error rate, memory, CPU, restart counts, disk). Produces a root cause hypothesis with confidence level and supporting evidence.
+
+**Mitigator** (Sonnet) — proposes a remediation plan, presents it to the human operator, and (after approval) executes it using mutating kubectl tools. Re-checks pod status after the action to verify. Human approval gate: `REQUIRE_HUMAN_APPROVAL=true` (default) means the operator types yes/no before any cluster mutation.
+
+**Communicator** (Haiku) — translates everything into a structured Slack Block Kit incident card via `post_incident_card`, plus a resolution update via `post_resolution_update`. Uses Haiku: formatting tasks don't need Sonnet's reasoning depth, and the cost saving across many incidents is meaningful.
+
+#### Model Routing
+
+| Agent         | Model  | Reason                                                    |
+|---------------|--------|-----------------------------------------------------------|
+| Triage        | Sonnet | Fast pattern recognition, but needs reasoning breadth     |
+| Investigator  | Sonnet | Complex multi-step log + metric correlation               |
+| Mitigator     | Sonnet | Change management requires careful reasoning              |
+| Communicator  | Haiku  | Formatting task — cheap, fast, good at structured output  |
+
+#### Human Approval Gate
+
+Every mutating kubectl command (restart, scale, patch) calls `_approval_gate()` before executing:
+```
+⚠️  APPROVAL REQUIRED
+Action: kubectl rollout restart deployment/payments-api -n payments
+Approve? [yes/no]:
+```
+
+`REQUIRE_HUMAN_APPROVAL=false` bypasses the gate for CI/demo mode. This is the same safety pattern as the K8s Doctor — the agent reasons and proposes; the human decides before anything touches the cluster.
+
+---
+
+### Key Design Decisions
+
+**Voyage AI for embeddings, not OpenAI** — technical domain coverage + cost. Alert text is dense with Kubernetes labels, metric names, and operational jargon. Voyage AI handles this better.
+
+**IVFFlat index with lists=100** — not HNSW, because IVFFlat is better for datasets that grow incrementally (new alerts arrive continuously) and don't need HNSW's memory overhead for <1M rows.
+
+**Time-bounded similarity search** — querying ALL historical alerts for similarity would produce spurious matches (last week's OOM cascade looks similar to today's). The `CORRELATION_WINDOW_MINUTES=30` env var limits the search to recent alerts only.
+
+**Haiku for the Communicator** — not every agent needs Sonnet. The Communicator does a formatting task: it has all the information it needs from the previous agents, it just needs to structure it into a Slack Block Kit JSON. Haiku is 20x cheaper and equally capable at this task.
+
+**CrewAI `context` parameter for task dependencies** — tasks 3 (Mitigate) and 4 (Communicate) have `context=[triage_task, investigate_task]` and `context=[triage_task, investigate_task, mitigate_task]` respectively. CrewAI automatically passes the output of dependency tasks into the next task's execution context.
+
+**Dev mode for Slack** — if `SLACK_BOT_TOKEN` is not set, `post_incident_card` prints the Block Kit JSON to stdout instead of posting. This lets you develop and test the Communicator without a live Slack app.
+
+---
+
+### Stack
+
+```
+Alert Correlator:
+  LangGraph · Voyage AI (voyage-3-lite) · pgvector (PostgreSQL 16)
+  · Claude Haiku (incident title/summary) · LangSmith
+
+Incident Commander:
+  CrewAI · LangChain Anthropic
+  · claude-sonnet-4-6 (Triage, Investigator, Mitigator)
+  · claude-haiku-4-5 (Communicator)
+  · LangSmith
+```
+
+---
+
+### What Could Be Better
+
+**pgvector ivfflat probes** — `SET ivfflat.probes = 10` before each query improves recall at a small speed cost. Not implemented — worth adding as a configurable env var.
+
+**Alert deduplication before embedding** — if the same alert fires twice within 30 seconds (common with flapping), it generates two embed API calls. The `ON CONFLICT (fingerprint) DO UPDATE` upsert handles the DB side, but the redundant Voyage AI call still costs tokens. A pre-embed dedup pass would fix this.
+
+**CrewAI parallel execution** — tasks 1 (Triage) and 2 (Investigate) have no dependency on each other and could run concurrently. CrewAI `Process.sequential` with `context=[]` on both tasks achieves near-parallel execution in practice (they share a thread), but `Process.hierarchical` with a manager agent would achieve true parallelism. Not implemented — adds complexity.
+
+**Wire Alert Correlator → Incident Commander** — currently the two agents are independent. The natural next step is: `correlate.py` outputs incidents → `respond.py` reads them. The `respond.py --incident` flag accepts the correlator's JSON output, so the wire is `make correlate --output incidents.json && make respond --incident incidents.json`. A daemon wrapper that polls for new incidents would close the loop fully.
 

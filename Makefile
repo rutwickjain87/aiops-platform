@@ -31,6 +31,14 @@
 #   make setup-sast-fix          # bootstrap sast-auto-fix venv only
 #   make scan-sast               # scan target with Semgrep (no fix)
 #   make run-sast-fix            # scan + fix + validate + open PR
+#   make setup-alert-correlator  # bootstrap alert-correlator venv only
+#   make correlator-up           # start pgvector Docker container
+#   make correlator-down         # stop pgvector Docker container
+#   make correlate               # run alert correlator (synthetic mixed scenario)
+#   make correlate SCENARIO=oom_cascade    # specific scenario
+#   make setup-incident-commander         # bootstrap incident-commander venv only
+#   make respond-demo            # run incident commander with demo OOM incident
+#   make respond-demo DEMO=node_pressure  # different demo scenario
 
 # ── Venv paths ────────────────────────────────────────────────────────────────
 LOG_AGENT_DIR   := agents/log-intelligence
@@ -70,6 +78,16 @@ IAC_PYTHON_ABS  := $(CURDIR)/$(IAC_VENV)/bin/python
 IAC_PROMPT      ?= "A containerised web app on AWS ECS Fargate with an ALB and a Postgres RDS database"
 IAC_OUTPUT      ?= $(IAC_AGENT_DIR)/iac-output
 
+CORR_AGENT_DIR  := agents/alert-correlator
+CORR_VENV       := $(CORR_AGENT_DIR)/.venv
+CORR_PYTHON_ABS := $(CURDIR)/$(CORR_VENV)/bin/python
+SCENARIO        ?= mixed
+
+INC_AGENT_DIR   := agents/incident-commander
+INC_VENV        := $(INC_AGENT_DIR)/.venv
+INC_PYTHON_ABS  := $(CURDIR)/$(INC_VENV)/bin/python
+DEMO            ?= oom
+
 K8S_NAMESPACE   ?= doctor-lab
 K8S_RESOURCE    ?= crashloop-demo
 K8S_SYMPTOM     ?= CrashLoopBackOff
@@ -83,10 +101,12 @@ RESULTS_DIR     := evals/results
 
 .PHONY: eval test test-log test-slack-bot test-pr-reviewer test-k8s-doctor lint fmt \
         setup setup-log setup-slack-bot setup-pr-reviewer setup-k8s-doctor setup-mcp-prometheus \
-        setup-sast-fix setup-iac-gen obs-up obs-down obs-logs run-slack-bot run-pr-reviewer \
+        setup-sast-fix setup-iac-gen setup-alert-correlator setup-incident-commander \
+        obs-up obs-down obs-logs run-slack-bot run-pr-reviewer \
         cluster-up cluster-down run-k8s-doctor run-mcp-prometheus \
         eval-k8s-doctor routing-experiment scan-sast run-sast-fix \
-        run-iac-gen run-iac-gen-no-validate help
+        run-iac-gen run-iac-gen-no-validate \
+        correlator-up correlator-down correlate respond-demo help
 
 .DEFAULT_GOAL := help
 
@@ -312,6 +332,47 @@ run-iac-gen-no-validate:
 	fi
 	@echo "Running IaC Generator (no terraform validate)..."
 	cd $(IAC_AGENT_DIR) && $(IAC_PYTHON_ABS) generate.py $(IAC_PROMPT) --output $(IAC_OUTPUT) --no-validate
+
+# ── Alert Correlator ──────────────────────────────────────────────────────────
+setup-alert-correlator:
+	@echo "Setting up alert-correlator venv..."
+	cd $(CORR_AGENT_DIR) && python3 -m venv .venv
+	cd $(CORR_AGENT_DIR) && $(CORR_PYTHON_ABS) -m pip install --quiet --upgrade pip
+	cd $(CORR_AGENT_DIR) && $(CORR_PYTHON_ABS) -m pip install --quiet -r requirements.txt
+	@echo "✅  alert-correlator venv ready. Copy .env.example → .env and fill in keys"
+
+correlator-up:
+	@echo "Starting pgvector container..."
+	docker compose -f $(CORR_AGENT_DIR)/docker-compose.yml up -d
+	@echo "  pgvector listening on localhost:5432 (db=alerts, user=alertcorr)"
+	@echo "  Wait ~5s for healthcheck, then run: make correlate"
+
+correlator-down:
+	docker compose -f $(CORR_AGENT_DIR)/docker-compose.yml down
+
+correlate:
+	@if [ ! -f "$(CORR_PYTHON_ABS)" ]; then \
+	    echo "⚠️  alert-correlator venv not found — run: make setup-alert-correlator"; \
+	    exit 1; \
+	fi
+	@echo "Running Alert Correlator (scenario=$(SCENARIO))..."
+	cd $(CORR_AGENT_DIR) && $(CORR_PYTHON_ABS) correlate.py --scenario $(SCENARIO)
+
+# ── Incident Commander ─────────────────────────────────────────────────────────
+setup-incident-commander:
+	@echo "Setting up incident-commander venv..."
+	cd $(INC_AGENT_DIR) && python3 -m venv .venv
+	cd $(INC_AGENT_DIR) && $(INC_PYTHON_ABS) -m pip install --quiet --upgrade pip
+	cd $(INC_AGENT_DIR) && $(INC_PYTHON_ABS) -m pip install --quiet -r requirements.txt
+	@echo "✅  incident-commander venv ready. Copy .env.example → .env and fill in keys"
+
+respond-demo:
+	@if [ ! -f "$(INC_PYTHON_ABS)" ]; then \
+	    echo "⚠️  incident-commander venv not found — run: make setup-incident-commander"; \
+	    exit 1; \
+	fi
+	@echo "Running Incident Commander demo (scenario=$(DEMO))..."
+	cd $(INC_AGENT_DIR) && $(INC_PYTHON_ABS) respond.py --demo $(DEMO)
 
 # ── lint ──────────────────────────────────────────────────────────────────────
 lint:
