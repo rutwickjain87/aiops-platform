@@ -86,33 +86,48 @@ SCENARIOS = {
         },
     ],
 
-    # Security cascade: Semgrep finding → SAST alert → policy violation
+    # Security cascade: runtime compromise indicators on the same service.
+    # All three alerts share namespace=payments, service=payments-api, and
+    # describe suspicious/anomalous behaviour on the same workload — vocabulary
+    # overlap that MiniLM can detect via text similarity.
+    # (Cross-namespace CI→runtime chains like SAST→OPA are causal but not
+    # textually similar — they require rule-based correlation, not vector search.)
     "security_incident": [
         {
-            "alertname": "SASTCriticalFinding",
-            "severity": "critical",
-            "namespace": "ci",
-            "repo": "payments-service",
-            "rule": "python.flask.security.injection.tainted-sql-string",
-            "summary": "Critical SAST finding in {repo}",
-            "description": "Semgrep detected SQL injection risk in {repo}. Rule: {rule}. Commit blocked.",
-        },
-        {
-            "alertname": "OPAPolicyViolation",
-            "severity": "critical",
-            "namespace": "payments",
-            "policy": "require-non-root",
-            "workload": "payments-api",
-            "summary": "OPA policy violation: {policy} on {workload}",
-            "description": "Deployment {workload} rejected by Gatekeeper. Policy: {policy}. Container running as root.",
-        },
-        {
-            "alertname": "VaultSecretLeak",
+            "alertname": "UnauthorizedAPIAccess",
             "severity": "critical",
             "namespace": "payments",
             "service": "payments-api",
-            "summary": "Vault secret access anomaly in {service}",
-            "description": "Unusual secret access pattern detected. Service {service} accessed 47 secrets in 2 minutes (baseline: 3).",
+            "summary": "Suspicious unauthorized API access pattern on {service}",
+            "description": (
+                "payments-api is receiving high volume of requests with invalid JWT tokens "
+                "from {n} distinct source IPs. 403 rate spiked to 40% in the last 5 minutes. "
+                "Possible credential stuffing or token replay attack on payments service."
+            ),
+        },
+        {
+            "alertname": "AbnormalEgressTraffic",
+            "severity": "critical",
+            "namespace": "payments",
+            "service": "payments-api",
+            "summary": "Suspicious outbound network traffic from {service}",
+            "description": (
+                "payments-api pod is sending unusual egress traffic to an external IP "
+                "not in the allowlist. Volume: 250MB in 3 minutes. "
+                "Possible data exfiltration from payments namespace. Istio policy flagged."
+            ),
+        },
+        {
+            "alertname": "VaultAnomalousSecretAccess",
+            "severity": "critical",
+            "namespace": "payments",
+            "service": "payments-api",
+            "summary": "Anomalous Vault secret access rate for {service}",
+            "description": (
+                "payments-api accessed 52 Vault secrets in 2 minutes (baseline: 3/hour). "
+                "Secrets include database credentials and API keys for payments namespace. "
+                "Access pattern is inconsistent with normal payments-api startup behaviour."
+            ),
         },
     ],
 

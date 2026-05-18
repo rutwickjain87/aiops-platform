@@ -89,6 +89,43 @@ def upsert_alert(conn, alert: dict, embedding: list[float]) -> int:
 # Similarity search
 # ---------------------------------------------------------------------------
 
+def _colocation_filter(labels: dict) -> tuple[str, tuple]:
+    """
+    Build a SQL WHERE clause fragment that requires candidate alerts to share
+    at least one scope label (namespace, service, or node) with the anchor.
+
+    Why: MiniLM detects structural similarity ("something is down") across
+    unrelated namespaces, producing false-positive clusters. Requiring shared
+    scope pins correlation to the same blast radius before even checking vectors.
+
+    Returns (clause_str, params_tuple). If no scope labels found, returns
+    empty strings so the query runs without any co-location constraint.
+    """
+    namespace = labels.get("namespace", "")
+    service = labels.get("service", labels.get("job", ""))
+    node = labels.get("node", "")
+
+    conditions = []
+    params = []
+
+    if namespace:
+        conditions.append("labels->>'namespace' = %s")
+        params.append(namespace)
+    if service:
+        conditions.append("(labels->>'service' = %s OR labels->>'job' = %s)")
+        params.extend([service, service])
+    if node:
+        conditions.append("labels->>'node' = %s")
+        params.append(node)
+
+    if not conditions:
+        return "", ()
+
+    # OR between conditions: match if sharing ANY of namespace, service, or node
+    clause = "AND (" + " OR ".join(conditions) + ")"
+    return clause, tuple(params)
+
+
 def query_similar_alerts(
     conn,
     embedding: list[float],
@@ -96,64 +133,58 @@ def query_similar_alerts(
     threshold: float,
     limit: int,
     exclude_fingerprint: Optional[str] = None,
+    anchor_labels: Optional[dict] = None,
 ) -> list[dict]:
     """
     Return alerts within the time window whose embedding cosine similarity
     to `embedding` is >= threshold, ordered by similarity descending.
+
+    Co-location pre-filter (anchor_labels):
+      If provided, only considers alerts that share at least one of:
+      namespace, service, or node with the anchor alert.
+      This prevents cross-namespace structural false positives
+      (e.g. CronJobFailed in 'batch' matching TargetDown in 'monitoring'
+      just because both describe "something is down").
     """
-    # Use a subquery so the similarity alias is available in the outer WHERE.
-    # HAVING without GROUP BY is invalid in PostgreSQL — subquery is the fix.
-    if exclude_fingerprint:
-        sql = """
-            SELECT * FROM (
-                SELECT
-                    id,
-                    fingerprint,
-                    name,
-                    severity,
-                    labels,
-                    annotations,
-                    started_at,
-                    received_at,
-                    status,
-                    1 - (embedding <=> %s::vector) AS similarity
-                FROM alerts
-                WHERE
-                    received_at >= NOW() - INTERVAL '%s minutes'
-                    AND status = 'firing'
-                    AND embedding IS NOT NULL
-                    AND fingerprint != %s
-            ) sub
-            WHERE similarity >= %s
-            ORDER BY similarity DESC
-            LIMIT %s
-        """
-        params = (embedding, window_minutes, exclude_fingerprint, threshold, limit)
-    else:
-        sql = """
-            SELECT * FROM (
-                SELECT
-                    id,
-                    fingerprint,
-                    name,
-                    severity,
-                    labels,
-                    annotations,
-                    started_at,
-                    received_at,
-                    status,
-                    1 - (embedding <=> %s::vector) AS similarity
-                FROM alerts
-                WHERE
-                    received_at >= NOW() - INTERVAL '%s minutes'
-                    AND status = 'firing'
-                    AND embedding IS NOT NULL
-            ) sub
-            WHERE similarity >= %s
-            ORDER BY similarity DESC
-            LIMIT %s
-        """
-        params = (embedding, window_minutes, threshold, limit)
+    # Build the co-location filter clause from anchor labels
+    colocation_clause, colocation_params = _colocation_filter(anchor_labels or {})
+
+    exclude_clause = "AND fingerprint != %s" if exclude_fingerprint else ""
+    exclude_params = (exclude_fingerprint,) if exclude_fingerprint else ()
+
+    sql = f"""
+        SELECT * FROM (
+            SELECT
+                id,
+                fingerprint,
+                name,
+                severity,
+                labels,
+                annotations,
+                started_at,
+                received_at,
+                status,
+                1 - (embedding <=> %s::vector) AS similarity
+            FROM alerts
+            WHERE
+                received_at >= NOW() - INTERVAL '%s minutes'
+                AND status = 'firing'
+                AND embedding IS NOT NULL
+                {exclude_clause}
+                {colocation_clause}
+        ) sub
+        WHERE similarity >= %s
+        ORDER BY similarity DESC
+        LIMIT %s
+    """
+    params = (
+        embedding,
+        window_minutes,
+        *exclude_params,
+        *colocation_params,
+        threshold,
+        limit,
+    )
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(sql, params)

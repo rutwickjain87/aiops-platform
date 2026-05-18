@@ -130,6 +130,7 @@ def query_similar(state: dict) -> dict:
                     threshold=THRESHOLD,
                     limit=MAX_SIMILAR,
                     exclude_fingerprint=fp,
+                    anchor_labels=alert.get("labels", {}),
                 )
             except Exception as exc:
                 errors.append(f"pgvector query error for alert {fp}: {exc}")
