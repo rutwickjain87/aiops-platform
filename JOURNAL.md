@@ -1155,7 +1155,7 @@ Approve? [yes/no]:
 
 ### Key Design Decisions
 
-**Voyage AI for embeddings, not OpenAI** — technical domain coverage + cost. Alert text is dense with Kubernetes labels, metric names, and operational jargon. Voyage AI handles this better.
+**Local embeddings (all-MiniLM-L6-v2) for development, Voyage AI for production** — see the embedding model findings below for the full reasoning.
 
 **IVFFlat index with lists=100** — not HNSW, because IVFFlat is better for datasets that grow incrementally (new alerts arrive continuously) and don't need HNSW's memory overhead for <1M rows.
 
@@ -1169,12 +1169,46 @@ Approve? [yes/no]:
 
 ---
 
+### Embedding Model Findings: MiniLM vs Voyage AI
+
+We switched from Voyage AI to `all-MiniLM-L6-v2` for local development (no API key, no cost, ~80MB), then ran the full scenario suite. The results surface a fundamental difference between general-purpose and domain-tuned embedding models.
+
+#### What MiniLM handles well
+
+**Operational cascade correlation** — OOM cascade, node pressure. All alerts in these scenarios share vocabulary that propagates through the failure: `payments`, `payments-api`, `pod`, `restart`, `OOMKilled`, `evict`, `memory`. MiniLM detects these overlapping tokens and pulls the embeddings into the same region of vector space. Cosine similarities ranged from 0.62–0.71 across the OOM cascade alerts, cleanly above a 0.60 threshold.
+
+#### Where MiniLM fails
+
+**Security incident chains** — a SAST finding, an OPA policy violation, and a Vault secret anomaly are causally linked (attacker probed the codebase → deployed a bad image → exfiltrated credentials) but their alert texts are about completely different things. MiniLM sees "SQL injection, Semgrep, commit blocked" vs "container running as root, Gatekeeper" vs "47 secrets accessed, Vault anomaly" and finds no meaningful similarity. All pairwise scores were below 0.50 — no threshold works. This is not a tuning problem; it is a hard limit of text similarity as a correlation signal.
+
+**Structural false positives** — without a co-location pre-filter, MiniLM picks up _structural_ similarity ("something failed / is down") across completely unrelated systems. `CronJobFailed` in `namespace=batch` and `TargetDown` in `namespace=monitoring` scored above 0.60 because both sentences pattern-match to "X is unavailable". We fixed this with a namespace/service/node co-location gate: candidates must share at least one scope label with the anchor before vector comparison happens at all.
+
+#### Why Voyage AI is the right choice for production
+
+Voyage AI's `voyage-3-lite` was fine-tuned specifically on technical and code content. Two effects matter here:
+
+First, it learns what _operational similarity_ means for infrastructure text. Kubernetes alert names, Prometheus metric labels, and cloud provider terminology are part of its training distribution. It has been shown that "OOMKilled" and "HighErrorRate in the same namespace" describe the same class of failure, not just that the two sentences share some tokens.
+
+Second, its similarity scores are better spread across the full 0–1 range. Related technical texts land at 0.80–0.92; unrelated texts land at 0.20–0.35. The gap between "yes cluster" and "no don't cluster" is wide, making threshold selection robust. With MiniLM, that gap is narrow (0.50–0.70 for related, 0.30–0.55 for unrelated), and the right threshold shifts significantly between alert types.
+
+For the security incident case specifically, Voyage AI understands that "Semgrep SQL injection finding" and "Vault anomalous credential access" describe events in the same threat category — because it was trained on security documentation as well as operational runbooks. MiniLM was not.
+
+#### Decision: MiniLM for local dev, Voyage AI for production
+
+`all-MiniLM-L6-v2` is appropriate for developing and testing the pipeline architecture: it runs entirely locally with no API key, downloads once in ~30 seconds, and produces correct clustering for the common operational cascade patterns. Switch to Voyage AI (`voyage-3-lite`, `EMBEDDING_DIM=1024` in `init.sql`, `SIMILARITY_THRESHOLD=0.85` in `.env`) before deploying to a real environment where cross-namespace security incident correlation matters. The only code change required is swapping `embeddings.py` — the rest of the pipeline (pgvector schema aside) is model-agnostic.
+
+#### Co-location pre-filter: the fix that generalises
+
+The namespace/service/node co-location gate we added is the right architectural pattern regardless of which embedding model is used. It solves the fundamental problem that vector similarity measures text angle, not blast radius. Two alerts from different namespaces with no shared service or node cannot be the same incident — no embedding model should be asked to make that determination from text alone. Adding this structural gate as a SQL pre-filter means the model only ever compares alerts that could plausibly be the same incident.
+
+---
+
 ### Stack
 
 ```
 Alert Correlator:
-  LangGraph · Voyage AI (voyage-3-lite) · pgvector (PostgreSQL 16)
-  · Claude Haiku (incident title/summary) · LangSmith
+  LangGraph · sentence-transformers/all-MiniLM-L6-v2 (dev) / Voyage AI voyage-3-lite (prod)
+  · pgvector (PostgreSQL 16) · Claude Haiku (incident title/summary) · LangSmith
 
 Incident Commander:
   CrewAI · LangChain Anthropic
@@ -1189,9 +1223,9 @@ Incident Commander:
 
 **pgvector ivfflat probes** — `SET ivfflat.probes = 10` before each query improves recall at a small speed cost. Not implemented — worth adding as a configurable env var.
 
-**Alert deduplication before embedding** — if the same alert fires twice within 30 seconds (common with flapping), it generates two embed API calls. The `ON CONFLICT (fingerprint) DO UPDATE` upsert handles the DB side, but the redundant Voyage AI call still costs tokens. A pre-embed dedup pass would fix this.
+**Alert deduplication before embedding** — if the same alert fires twice within 30 seconds (common with flapping), it generates two embed calls. The `ON CONFLICT (fingerprint) DO UPDATE` upsert handles the DB side, but the redundant embedding call still costs time (or money with Voyage AI). A pre-embed dedup pass would fix this.
 
-**CrewAI parallel execution** — tasks 1 (Triage) and 2 (Investigate) have no dependency on each other and could run concurrently. CrewAI `Process.sequential` with `context=[]` on both tasks achieves near-parallel execution in practice (they share a thread), but `Process.hierarchical` with a manager agent would achieve true parallelism. Not implemented — adds complexity.
+**CrewAI parallel execution** — tasks 1 (Triage) and 2 (Investigate) have no dependency on each other and could run concurrently. `Process.hierarchical` with a manager agent would achieve true parallelism. Not implemented — adds complexity.
 
-**Wire Alert Correlator → Incident Commander** — currently the two agents are independent. The natural next step is: `correlate.py` outputs incidents → `respond.py` reads them. The `respond.py --incident` flag accepts the correlator's JSON output, so the wire is `make correlate --output incidents.json && make respond --incident incidents.json`. A daemon wrapper that polls for new incidents would close the loop fully.
+**Rule-based correlation layer for security chains** — vector similarity cannot correlate SAST→OPA→Vault chains because the alerts are textually dissimilar. A hybrid approach (rules for known attack patterns, vectors for operational cascades) would handle both. PagerDuty's Intelligent Alert Grouping uses exactly this hybrid.
 

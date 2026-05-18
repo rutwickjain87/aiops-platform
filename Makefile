@@ -39,6 +39,8 @@
 #   make setup-incident-commander         # bootstrap incident-commander venv only
 #   make respond-demo            # run incident commander with demo OOM incident
 #   make respond-demo DEMO=node_pressure  # different demo scenario
+#   make respond                          # full pipeline: correlate → incident commander
+#   make respond SCENARIO=oom_cascade     # full pipeline with specific scenario
 
 # ── Venv paths ────────────────────────────────────────────────────────────────
 LOG_AGENT_DIR   := agents/log-intelligence
@@ -106,7 +108,7 @@ RESULTS_DIR     := evals/results
         cluster-up cluster-down run-k8s-doctor run-mcp-prometheus \
         eval-k8s-doctor routing-experiment scan-sast run-sast-fix \
         run-iac-gen run-iac-gen-no-validate \
-        correlator-up correlator-down correlate respond-demo help
+        correlator-up correlator-down correlate respond-demo respond help
 
 .DEFAULT_GOAL := help
 
@@ -373,6 +375,30 @@ respond-demo:
 	fi
 	@echo "Running Incident Commander demo (scenario=$(DEMO))..."
 	cd $(INC_AGENT_DIR) && $(INC_PYTHON_ABS) respond.py --demo $(DEMO)
+
+# ── Full pipeline: Alert Correlator → Incident Commander ──────────────────────
+# Correlates alerts from a synthetic scenario, saves incidents to a temp file,
+# then hands them straight to the Incident Commander.
+PIPELINE_TMPFILE ?= /tmp/aiops-incidents.json
+
+respond:
+	@if [ ! -f "$(CORR_PYTHON_ABS)" ]; then \
+	    echo "⚠️  alert-correlator venv not found — run: make setup-alert-correlator"; \
+	    exit 1; \
+	fi
+	@if [ ! -f "$(INC_PYTHON_ABS)" ]; then \
+	    echo "⚠️  incident-commander venv not found — run: make setup-incident-commander"; \
+	    exit 1; \
+	fi
+	@echo "━━━ Step 1/2: Alert Correlator (scenario=$(SCENARIO)) ━━━"
+	cd $(CORR_AGENT_DIR) && $(CORR_PYTHON_ABS) correlate.py --scenario $(SCENARIO) --output $(PIPELINE_TMPFILE)
+	@if [ ! -s "$(PIPELINE_TMPFILE)" ]; then \
+	    echo "No incidents produced — nothing to hand to Incident Commander."; \
+	    exit 0; \
+	fi
+	@echo ""
+	@echo "━━━ Step 2/2: Incident Commander ━━━"
+	cd $(INC_AGENT_DIR) && $(INC_PYTHON_ABS) respond.py --incident $(PIPELINE_TMPFILE)
 
 # ── lint ──────────────────────────────────────────────────────────────────────
 lint:
