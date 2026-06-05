@@ -1229,3 +1229,259 @@ Incident Commander:
 
 **Rule-based correlation layer for security chains** — vector similarity cannot correlate SAST→OPA→Vault chains because the alerts are textually dissimilar. A hybrid approach (rules for known attack patterns, vectors for operational cascades) would handle both. PagerDuty's Intelligent Alert Grouping uses exactly this hybrid.
 
+---
+
+### Debugging Journal — Everything That Broke (and Why)
+
+This section records every bug encountered during Day 10, in the order they appeared. The pattern of failures is instructive — most of them are invisible at first glance.
+
+#### 1. SQL `HAVING` without `GROUP BY`
+
+PostgreSQL rejected `HAVING 1 - (embedding <=> query::vector) >= 0.85` because `HAVING` can only filter aggregate groups, not raw row values. The similarity expression is a per-row scalar, not a group aggregate. Fix: wrap the inner query in a subquery, compute similarity as a named column (`1 - (...) AS similarity`), then filter with `WHERE similarity >= threshold` in the outer query. This is a fundamental SQL pattern — if you find yourself putting a non-aggregate expression in `HAVING`, you want a subquery with `WHERE`.
+
+#### 2. Zero similarity groups after switching to MiniLM
+
+After switching from Voyage AI to `all-MiniLM-L6-v2`, the threshold of 0.85 (calibrated for Voyage AI's 0.80–0.92 range for related alerts) produced zero matches. MiniLM's similarity range for related operational alerts is 0.50–0.70 — completely non-overlapping. The correlator appeared broken but the issue was purely threshold miscalibration. Fix: lower `SIMILARITY_THRESHOLD=0.60` for MiniLM. This reinforced that a threshold is not a universal constant — it is model-specific and must be re-calibrated whenever the embedding model changes.
+
+#### 3. Security incident → 0 clusters even after threshold fix
+
+The `security_incident` scenario (SAST finding + OPA violation + Vault anomaly) produced zero clusters at any threshold above 0.50. This looked like a bug but was an architectural reality: MiniLM measures text angle, not causal chain membership. These three alerts describe completely different systems in completely different vocabulary — no threshold change can correlate them because the vectors genuinely point in different directions. Fix: redesigned the scenario to use runtime compromise indicators (JWT abuse, egress anomaly, Vault secret spike) that share namespace/service/vocabulary — alerts that are textually similar *and* causally linked.
+
+#### 4. Noise false positive cluster (co-location bug)
+
+`CronJobFailed` in `namespace=batch` and `TargetDown` in `namespace=monitoring` clustered together at threshold 0.60. These are structurally similar ("X is unavailable") but completely unrelated. The correlator was asking the embedding model to do a job it cannot do — determining whether two alerts are from the same incident scope using only text angle. Fix: added a SQL co-location pre-filter that requires candidates to share at least one of namespace/service/node with the anchor alert before vector comparison. The model now only sees candidates that could plausibly be related.
+
+#### 5. CrewAI ValidationError on Agent initialisation
+
+CrewAI >= 0.80 removed support for passing a LangChain `ChatAnthropic` object as the `llm` parameter on an `Agent`. The error was a Pydantic `ValidationError` with a message about `llm` type mismatch — not a clear "API changed" message. Fix: replace `ChatAnthropic(model="...")` with CrewAI's native `LLM(model="anthropic/claude-sonnet-4-6")`. The `LLM` class routes through litellm internally, which is the standard adapter layer for multi-provider model routing in CrewAI >= 0.80.
+
+#### 6. kubectl connecting to localhost:8080 (no cluster context)
+
+Every kubectl call returned `connection refused localhost:8080` — the default when kubectl has no context configured. The `.env` file had `KUBE_CONTEXT=kind-doctor-lab` but `kubectl_tool.py` was not reading it. The env var was being loaded by `load_dotenv` in `respond.py`, but `kubectl_tool.py` was computing `_KUBE_CONTEXT = os.environ.get("KUBE_CONTEXT", "")` at module import time — which ran after `load_dotenv`. Fix: confirmed import order (lazy import inside `main()` means `load_dotenv` runs first), and added `--context` and `--kubeconfig` injection to the `_kubectl()` helper.
+
+#### 7. `~/.kube/config` not found
+
+`KUBECONFIG=~/.kube/config` in `.env` was read literally — Python's `os.environ.get()` does not shell-expand `~`. The subprocess received `--kubeconfig ~/.kube/config` and failed to find the file. Fix: `os.path.expanduser(os.environ.get("KUBECONFIG", ""))` — always expand `~` when using env vars that contain paths.
+
+#### 8. Namespace "payments" not found
+
+The demo incidents in `respond.py` referenced `namespace: payments` — a fictional namespace used during initial design. The kind cluster created by `make cluster-up` only has `namespace: doctor-lab` with the OOM and CrashLoopBackOff fixtures. The Triage agent was making real kubectl calls and getting back "namespace not found". Fix: updated both demo incidents to reference `doctor-lab`, `oom-demo`, and `crashloop-demo` — matching the actual fixture pods deployed by the cluster setup script.
+
+#### 9. Approval gate never fired (most subtle bug of the day)
+
+After creating a real `memory-hog` Deployment in `doctor-lab` and running the demo with `REQUIRE_HUMAN_APPROVAL=true`, the Mitigator never asked for approval. It ran, reported success, and Slack appeared to be notified. Three separate root causes, each contributing:
+
+**Root cause A — Mitigator described the action but never called the tool.** The task description said "propose and (with human approval) apply." The LLM interpreted this as: write a proposal in prose, conclude with "pending human approval." The tool was never invoked, so `_approval_gate()` inside the tool was never reached. There is no code-level guarantee that an agent calls a tool — it is a reasoning decision made by the LLM on each run.
+
+**Root cause B — No instrumentation on mutating tools.** Without a sentinel print at the start of each mutating function, there was no way to tell whether the tool was called or merely described. The fix added a `🔧 MUTATING TOOL CALLED: <toolname>(<args>)` console print to all three mutating tools. This is the most important observability addition — it makes the invisible visible.
+
+**Root cause C — Slack "posting" was dev mode.** `SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}` in `.env` expands to an empty string when `SLACK_BOT_TOKEN` is not exported in the current shell. The Slack tool sees `SLACK_TOKEN = ""`, silently falls into dev mode, and prints the Block Kit JSON to stdout. The output *looked* like a successful post. Fix: documented the dev mode behaviour in `.env` with a clear comment. A real Slack token must be set to actually post.
+
+**Root cause D — KUBE_CONTEXT duplicated three times in `.env`.** A debugging artefact left in the file. Harmless (last value wins in python-dotenv), but confusing and a sign that the `.env` file was never reviewed after debugging.
+
+**Combined fix:** added sentinel prints to all mutating tools, strengthened the Mitigator task description to explicitly require tool invocation ("You MUST call at least one of patch_resource_limits / restart_deployment / scale_deployment — writing about it is not sufficient"), improved `_approval_gate()` with EOFError handling and rich console output, and cleaned up `.env`.
+
+---
+
+### Trade-offs Made in This Build
+
+**Natural language enforcement of tool invocation.** The Mitigator task description now contains "You MUST call the tool." This works — until it doesn't. A different model version, a run where `max_iter` is exhausted before the action step, or an incident context that leads the agent down a long investigation path can all produce a run where the instruction is ignored. This is prompt engineering, not code. The correct production approach is structured output: define a Pydantic output model for the Mitigate task that includes a `tool_called: str` and `tool_input: str` field, use `output_pydantic=MitigationResult` on the Task, and validate after the crew completes that the field is non-empty. CrewAI supports this. We deferred it to keep the scope manageable.
+
+**stdin blocking for human approval.** `input()` works in a terminal. It has no timeout — an operator who walks away during an approval prompt freezes the entire response pipeline indefinitely. In production, HITL approval belongs in the communication channel, not the terminal. The Mitigator should post a Slack message with Approve/Reject buttons, suspend, and resume when the webhook fires. PagerDuty and OpsGenie have native change approval APIs built for exactly this. Our stdin implementation demonstrates the *intent* of human oversight but is not something you'd run during an actual Sev-1 at 3am.
+
+**Personal kubeconfig credentials.** All kubectl mutations in this system run with the developer's `~/.kube/config` credentials — likely cluster-admin. The agent has no RBAC boundary. In production, the agent should authenticate as a dedicated service account with the minimum required permissions: `get`/`list` on pods, `patch` on Deployments in named namespaces, nothing else. The kubectl subprocess pattern we use makes this a straightforward swap (point `KUBECONFIG` at a service account kubeconfig) without any code changes.
+
+**No dry-run before mutating.** `kubectl patch` and `kubectl rollout restart` run live immediately after approval. `kubectl apply --dry-run=server` would validate the mutation against the live API server without applying it — catching schema errors, admission controller rejections, and quota violations before they happen. This step is missing.
+
+**No rollback mechanism.** If `patch_resource_limits` sets a value that makes things worse (wrong container name, incorrect memory format), there is no automated rollback. A production mitigator would snapshot the current resource spec with `kubectl get deployment -o json` before patching, store it in state, and have a `rollback_deployment` tool that restores it if a post-action health check fails.
+
+**Module-level env var constants.** `_REQUIRE_APPROVAL`, `_KUBE_CONTEXT`, `_KUBECONFIG` in `kubectl_tool.py` are computed once at import time. For a CLI that starts fresh on each invocation, this is fine. For a long-running service (FastAPI wrapper, Lambda handler), these values are frozen at cold-start and changes require a restart. The fix is lazy evaluation: compute `os.environ.get(...)` inside each function rather than at module scope.
+
+**`max_iter` as hard guillotine.** When the Investigator hits `max_iter=8`, CrewAI forces it to produce its current best answer regardless of completeness. For a complex cascading failure, eight tool calls may cover only half the investigation. The agent cannot signal "I need more iterations" — it gets cut off silently and the Mitigator acts on an incomplete analysis. No `max_time` is configured either, so a slow tool call (kubectl timeout, Prometheus unavailable) can burn through iterations on retries.
+
+---
+
+### Is This Production Ready?
+
+**No.** But it is production-adjacent in its architecture. The following table is honest about what would need to change.
+
+| Capability | Current state | Production requirement |
+|---|---|---|
+| Human approval | `input()` — blocks stdin, no timeout | Slack interactive buttons + webhook, auto-reject after N minutes |
+| Cluster credentials | Personal `~/.kube/config` (likely cluster-admin) | Dedicated service account, minimal RBAC per namespace |
+| Pre-flight safety | None — mutates immediately after approval | `kubectl apply --dry-run=server` before every mutation |
+| Rollback | None | Snapshot current spec before mutating; auto-rollback on failed health check |
+| Tool invocation guarantee | Prompt engineering ("You MUST call the tool") | `output_pydantic=MitigationResult` with `tool_called: str` field validated post-run |
+| Slack integration | Dev mode print when token unset | Real `SLACK_BOT_TOKEN`, error handling on post failure, retry logic |
+| Audit trail | Python logging only | Structured audit log per approved/rejected action: who, what, when, outcome |
+| Failure handling | Crew fails entirely on any exception | Per-agent retry with exponential backoff; partial completion state |
+| Approval timeout | Blocks indefinitely | Auto-reject with incident escalation after configurable timeout |
+| Embedding model | all-MiniLM-L6-v2 (development) | Voyage AI voyage-3-lite (domain-tuned, reliable 0.80–0.92 similarity range) |
+| pgvector query tuning | Default probe count | `SET ivfflat.probes = 10` per query for better recall |
+
+---
+
+### Production Best Practices — Summary
+
+These are the patterns that separate a solid proof-of-concept from something you'd actually run during an incident:
+
+**Always instrument mutating tools with sentinels before an approval gate.** If you cannot see a log line proving the tool was called, you have no ground truth. An agent that writes "I patched the memory limit" is not the same as an agent that called `patch_resource_limits`. These are two different facts. Instrument the tool boundary, not the agent's text output.
+
+**Validate tool invocation structurally, not through prompt instructions.** `output_pydantic` on the Mitigate task means the crew cannot complete without producing a typed object. If `tool_called` is empty, the agent didn't do its job — you know this deterministically, not probabilistically. Prompt engineering ("You MUST...") is a temporary patch, not a guarantee.
+
+**HITL approval belongs in the communication channel.** Operators respond to Slack, PagerDuty, and OpsGenie — not terminal prompts. An approval gate that blocks a terminal during an active incident is an anti-pattern. Design approval as an async webhook: post a message with action buttons, suspend the crew, resume on callback. This also gives you an audit trail for free.
+
+**Service account with least-privilege RBAC is non-negotiable.** An AI agent that can execute kubectl commands with cluster-admin credentials is a single prompt injection or logic error away from a cluster-wide incident. RBAC boundaries are the last line of defence when the agent reasons incorrectly.
+
+**Always run `--dry-run=server` before any mutation.** The Kubernetes API server's admission controllers, quota checks, and schema validation will catch a surprising number of errors that neither the agent nor a human reviewer would spot. Dry-run is free insurance.
+
+**Snapshot before patching, health-check after.** Capture the current resource spec before mutating. Define a health check (pod Running + Ready within N seconds). If the health check fails, automatically restore the snapshot. Agents make mistakes; the system should recover without human intervention.
+
+**Threshold calibration is model-specific.** The similarity threshold for clustering is not a universal constant — it is a model-specific hyperparameter. When you change the embedding model, re-run your test scenarios and measure pairwise similarities before setting a threshold. A threshold calibrated for Voyage AI (0.85) will produce zero clusters with MiniLM; a threshold calibrated for MiniLM (0.60) will produce false positives with Voyage AI.
+
+**The co-location pre-filter generalises beyond embeddings.** Requiring shared namespace/service/node before vector comparison is the right architectural pattern regardless of the embedding model. Structural blast-radius scope is deterministic and should be enforced in SQL before any probabilistic similarity comparison happens.
+
+**Test against real infrastructure, not just agent text output.** The approval gate bug was invisible until we added the sentinel print. The Slack "posting" bug was invisible until we traced the token expansion. Agent output text is unreliable as evidence that an action occurred — only instrumentation at the tool boundary is reliable.
+
+---
+
+## Day 11 — Demos + Micro-SaaS Scaffold + Multi-Provider Comparison
+
+**Date:** 20 May 2026
+
+---
+
+### What We Built
+
+**VHS demo tape scripts** (`demos/`)
+
+Three `.tape` files for the [VHS](https://github.com/charmbracelet/vhs) terminal recorder — one per flagship agent:
+- `log-triage.tape` — Records the Day-2 log triage agent against HDFS_2k.log, shows tool calls, structured output, then eval suite.
+- `k8s-doctor.tape` — Records the LangGraph observe→hypothesize→propose pipeline against CrashLoopBackOff and OOMKilled workloads, including the model routing demo (Haiku for `observe`, Sonnet for `hypothesize`/`propose`).
+- `incident-commander.tape` — Records all four CrewAI agents, including the approval gate pause and the Slack Block Kit card posted to stdout.
+
+Each tape file has a `Prerequisites:` block at the top. Run with `vhs <tape>` from any directory. Output goes to `demos/*.gif`.
+
+**Gif references embedded in READMEs:**
+- `agents/log-intelligence/README.md` — added `<img>` tag at top
+- `agents/k8s-doctor/README.md` — replaced placeholder text with `<img>` tag
+- `agents/incident-commander/README.md` — **created from scratch** — full senior-signal README with architecture diagram (ASCII), agent table, SRE metrics, failure modes table, production gaps table, and env var reference
+
+**Micro-SaaS scaffold** (`saas/`)
+
+FastAPI backend (`saas/api/`) wrapping the IaC Generator as a streaming service:
+- `POST /runs` — submits a job, returns SSE stream of `status`, `node`, `file`, `error`, `done` events. Each event is a JSON object.
+- `GET /runs/{id}` — polls a run by ID.
+- `GET /healthz` — liveness probe.
+- Stub auth (`src/core/auth.py`) — TODO: Supabase JWT verification.
+- Stub billing (`src/core/billing.py`) — TODO: Stripe metered usage via `billing.MeterEvent.create()`.
+
+Next.js 14 frontend (`saas/web/`) — TypeScript + Tailwind:
+- `lib/api.ts` — `startRun()` opens an SSE stream and yields typed `RunEvent` objects via `async function*`.
+- `components/RunForm.tsx` — prompt textarea + provider selector + submit button.
+- `components/RunOutput.tsx` — live pipeline progress (5 nodes with colour-coded state) + generated file viewer.
+- `app/page.tsx` — wires form → API stream → output panel.
+
+Architecture documented in `saas/README.md` with ASCII diagram.
+
+**Multi-provider comparison harness** (`agents/log-intelligence/run_multi_provider_comparison.py`)
+
+Extends the Day-3 `run_experiment.py` to run 5 OpenRouter models:
+
+| Model | Provider | Input $/1M | Output $/1M |
+|---|---|---|---|
+| `claude-sonnet-4-6` | Anthropic | $3.00 | $15.00 |
+| `claude-haiku-4-5` | Anthropic | $0.25 | $1.25 |
+| `gpt-4o-mini` | OpenAI | $0.15 | $0.60 |
+| `mistral-7b-instruct` | Mistral | $0.06 | $0.06 |
+| `llama-3.1-70b-instruct` | Meta | $0.52 | $0.75 |
+
+Captures per-case: pass/fail, latency, input/output tokens, estimated cost.
+Computes: pass rate, p50/p95 latency, avg $/run.
+Checks: structured section presence (`## Severity`, `## Root Cause Hypothesis`, `## Suggested Actions`), P-level compliance, log citation count.
+Saves full output per model per case to `experiments/outputs/multi-provider/` for qualitative review.
+Writes `experiments/multi-provider-comparison.md` with summary table, per-model breakdown, qualitative observation template, recommendation template, failure mode taxonomy, and pricing reference.
+
+Run: `python run_multi_provider_comparison.py` (full, ~20 min) or `--quick` (smoke test, ~3 min).
+
+---
+
+### Design Decisions
+
+**Why SSE over WebSockets for the SaaS API?**
+
+SSE is unidirectional (server → client) which is exactly what a streaming code generation job needs. WebSockets are bidirectional — they make sense for interactive chat, but add unnecessary complexity (connection upgrades, heartbeat management, binary framing) for a job queue. SSE streams over plain HTTP/2, works through load balancers transparently, and streams as an `AsyncIterator` in the client with no extra library. If the user needs to cancel a run, that's a separate `DELETE /runs/{id}` call — not a message over the same socket.
+
+**Why the `async function*` pattern in `lib/api.ts`?**
+
+It lets the caller `for await (const event of stream)` without pulling in an SSE client library. The response body is a ReadableStream; the generator reads it in chunks, splits on `\n\n` SSE frame boundaries, parses the JSON data payload, and yields typed `RunEvent` objects. The caller's React state update logic stays clean — each event is a discriminated union on `type`.
+
+**Why stub auth/billing with explicit TODOs rather than just omitting them?**
+
+The stubs define the interfaces now. When Phase 2 wires real Supabase or Stripe, the contract (`AuthUser`, `record_usage()`) already exists — it's a replacement, not an addition. The TODO comments are structured enough to be greppable (`TODO — Supabase`, `TODO — Stripe`). A new engineer can find every auth/billing touchpoint in two grep commands.
+
+**Why TypeScript + Next.js for the frontend, and not something else?**
+
+This was an active choice between four realistic options. The decision rests on three factors specific to this project: the data model has meaningful complexity (a discriminated union of SSE event types), the UI has non-trivial component state (live progress tracking, streaming file viewer), and the goal is a customer-facing SaaS product — not an internal dashboard.
+
+*TypeScript + Next.js (chosen):* TypeScript's primary contribution here is not "fewer bugs in general" — it's specifically the `RunEvent` discriminated union in `lib/api.ts`. The SSE stream emits five structurally different event shapes (`status`, `node`, `file`, `error`, `done`). Without types, accessing `event.filename` on a `status` event returns `undefined` silently. With the discriminated union, every `switch (event.type)` block is exhaustiveness-checked at compile time. The `async function*` SSE parser, the `RunForm` props, the `RunOutput` render logic — all of it has a type contract that a future contributor can read without tracing through runtime behaviour. Next.js was chosen over plain React because it provides routing, server components, and a production build pipeline with zero configuration, and its TypeScript support is first-class (the `tsconfig.json` is pre-tuned for the App Router). Cost: a build step and Node.js in the deployment stack.
+
+*Plain JavaScript + Next.js:* The same stack without types. Eliminates the compilation step and the `tsconfig.json`. Viable for a solo prototype where you wrote every line and will remember every field name. Becomes painful as soon as the SSE event schema changes and a `filname` typo causes a silent undefined — there is no compiler to catch it. The Next.js ecosystem and most third-party component libraries ship TypeScript types; opting out of TS means opting out of the best part of that tooling. Rejected: the complexity of the event model justifies the compile step.
+
+*Python + HTMX (server-rendered, no JS framework):* FastAPI already runs the backend, so a Jinja2 + HTMX setup would mean one language for the entire stack and no Node.js dependency. HTMX's SSE extension can swap DOM elements as events arrive with essentially no custom JavaScript. This is genuinely the right call for an internal tool or a rapid MVP. The limitation is that HTMX works against you as soon as UI state becomes non-trivial: the pipeline progress tracker (five nodes with independent colour-coded states), the file-by-file streaming viewer, and the `disabled` button state during a run all require component-level state that HTMX handles awkwardly via out-of-band swaps or Alpine.js bolted on. For a customer-facing product where UI polish drives conversion, you're building React inside HTMX and fighting the model. Would revisit this choice if the SaaS were an internal ops dashboard rather than a user-facing product.
+
+*Python + Streamlit:* Pure Python, fast to prototype, built-in streaming via `st.write_stream()`. Eliminated immediately: Streamlit is a data tool, not a web framework. It has no viable path to a custom auth flow, Stripe billing UI, or any branding beyond "looks like Streamlit." Suitable for demos and internal ML dashboards. Wrong tool for a product users pay for.
+
+*Go + Templ:* Go compiles to a single binary, has excellent native SSE support, and Templ provides type-safe HTML templates. The blocker is the Python dependency: LangGraph, CrewAI, sentence-transformers, and the Anthropic SDK are all Python-only. Running a Go frontend server alongside a Python agent backend means two runtimes, two deployment pipelines, and two languages in a project where the core business logic will always live in Python. The operational overhead is not justified. Would reconsider if the entire stack were being rewritten in Go from scratch.
+
+**Summary table:**
+
+| Option | Type safety | UI complexity ceiling | One-language stack | Customer-facing viability | Why rejected / chosen |
+|---|---|---|---|---|---|
+| **TypeScript + Next.js** | ✅ Compile-time | High | ✗ (adds Node.js) | ✅ | **Chosen** — typed SSE events, rich interactive state, ecosystem fit |
+| Plain JS + Next.js | ✗ Runtime only | High | ✗ | ✅ | Silent undefined on field typos; no upside for this data model |
+| Python + HTMX | N/A | Medium | ✅ | ⚠️ (limited polish) | Right for internal tools; fights component state in a product UI |
+| Python + Streamlit | N/A | Low | ✅ | ✗ | Data tool, not a web framework; no viable auth/billing path |
+| Go + Templ | ✅ Compile-time | High | ✗ (adds Go runtime) | ✅ | Two runtimes for a Python-first project; unjustified overhead |
+
+The decision would flip to Python + HTMX if: (a) the frontend were an internal ops dashboard rather than a user-facing product, or (b) the team had zero JavaScript experience and speed of iteration mattered more than UI polish.
+
+---
+
+**Why 5 models in the comparison instead of 3?**
+
+The original Day-3 experiment covered 3 models (Sonnet, Haiku, GPT-4o-mini) from 2 providers. The Day-11 extension adds Mistral 7B Instruct and Llama 3.1 70B Instruct because:
+1. The cross-provider table is the thing that gets shared. A 3-provider table is interesting; a 5-provider table spanning open-source and commercial models is a blog post.
+2. Mistral 7B at $0.06/1M tokens is worth knowing about even if it fails structured output — the failure mode itself is data.
+3. Llama 3.1 70B represents the "serious open-source" tier. If it performs close to GPT-4o-mini at comparable cost, that changes your offline fine-tuning conversation.
+
+---
+
+### What Phase 1 Looks Like
+
+At the end of Day 11, the platform has:
+- **8 working agents** across 4 frameworks (raw Anthropic SDK, LangChain, LangGraph, CrewAI)
+- **2 routing experiments** with real numbers in `experiments/`
+- **1 micro-SaaS skeleton** with a real streaming API and a live frontend
+- **3 demo tape scripts** ready to record
+- **Eval sets across all agents**
+- **Full observability** (LangSmith traces, Prometheus metrics, Loki logs, Grafana dashboards)
+
+What it doesn't have (Phase 2 scope): paying users, deployed infra, real auth/billing, CI evals on PRs for all agents, a production-grade HITL approval flow.
+
+---
+
+### Pending (to run locally)
+
+- [ ] `brew install vhs ffmpeg` → `vhs demos/log-triage.tape` → confirm gif renders
+- [ ] `vhs demos/k8s-doctor.tape` → embed in k8s-doctor README
+- [ ] `vhs demos/incident-commander.tape` → embed in incident-commander README
+- [ ] `cd saas/api && uvicorn main:app --reload` → `curl http://localhost:8080/healthz`
+- [ ] `cd saas/web && npm install && npm run dev` → open http://localhost:3000
+- [ ] `python run_multi_provider_comparison.py --quick` → confirm 5 model blocks appear
+- [ ] `python run_multi_provider_comparison.py` (full run) → fill in qualitative observations
+- [ ] Git commit: `feat: Day 11 — demos, micro-SaaS scaffold, multi-provider comparison`
+- [ ] Flip repo public, tag `v0.1.0`, draft GitHub Release
+- [ ] Pin repo on GitHub profile
+- [ ] Draft LinkedIn post (publish Day 12 morning after sleeping on it)
+

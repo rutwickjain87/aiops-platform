@@ -12,7 +12,7 @@
 > - [`GITHUB_SETUP.md`](../GITHUB_SETUP.md) — publishing the platform repo (Day 11)
 >
 > Living document. Update checkboxes as you go. Add notes/errors under each section.
-> Last updated: 2026-05-09 (Day 5 — Slack bot + LangSmith observability; Makefile added)
+> Last updated: 2026-05-20 (Day 11 — Micro-SaaS lint, ESLint, and TypeScript checks all verified green)
 
 ---
 
@@ -33,6 +33,9 @@ All common dev tasks are wired into the top-level `Makefile`. Run `make` (bare) 
 | `make setup` | Bootstrap ALL agent venvs (run once after clone) |
 | `make setup-log` | Bootstrap `log-intelligence` venv only |
 | `make setup-slack-bot` | Bootstrap `slack-incident-bot` venv only |
+| `make setup-k8s-doctor` | Bootstrap `k8s-doctor` venv only |
+| `make setup-alert-correlator` | Bootstrap `alert-correlator` venv only |
+| `make setup-incident-commander` | Bootstrap `incident-commander` venv only |
 | `make test` | Run all unit tests (all agents) |
 | `make test-log` | Run `log-intelligence` tests only |
 | `make test-slack-bot` | Run `slack-incident-bot` tests only (34 tests) |
@@ -41,6 +44,12 @@ All common dev tasks are wired into the top-level `Makefile`. Run `make` (bare) 
 | `make eval THRESHOLD=1.0` | Require 100% pass rate |
 | `make lint` | Ruff lint + format check |
 | `make fmt` | Auto-fix lint + format |
+| `make cluster-up` | Create `kind-doctor-lab` cluster + deploy OOM/CrashLoop fixtures |
+| `make cluster-down` | Delete the kind cluster |
+| `make run-k8s-doctor` | Run K8s Doctor agent against the kind cluster |
+| `make correlate SCENARIO=oom_cascade` | Run Alert Correlator (scenarios: `oom_cascade`, `node_pressure`, `security_incident`, `noise`) |
+| `make respond SCENARIO=oom_cascade` | Full pipeline: Alert Correlator → Incident Commander |
+| `make respond` | Run Incident Commander against an existing incidents JSON file |
 
 > **Why Make?** Each agent has its own isolated venv. The Makefile manages the full lifecycle — create, install, test, lint — in one place so docs and CI always stay in sync. Every doc in this repo references `make <target>` rather than raw `uv` / `pytest` commands. See [README.md](README.md) for the full rationale.
 
@@ -160,30 +169,14 @@ k9s version
 
 ---
 
-### OpenSRE (upstream reference)
+### OpenSRE (upstream reference — optional, skipped)
 
-```bash
-# Clone as sibling to aiops-platform — do NOT clone inside the platform dir
-git clone https://github.com/Tracer-Cloud/opensre \
-  ~/workspace/claude-code/ai-journey/opensre-upstream
-
-cd ~/workspace/claude-code/ai-journey/opensre-upstream
-
-# Install OpenSRE via official installer script (SETUP.md approach did not work)
-curl -fsSL https://raw.githubusercontent.com/Tracer-Cloud/opensre/main/install.sh | bash
-
-# Onboard
-opensre onboard
-
-# Run baseline investigation
-opensre investigate -i tests/e2e/kubernetes/fixtures/datadog_k8s_alert.json
-```
-
-- 🔲 Cloned to `opensre-upstream/`
-- 🔲 `opensre onboard` completed
-- 🔲 Baseline investigation produces a report
-
-> **Fallback:** If setup fails after 30 min, use the Docker variant and file an issue upstream. Don't burn the day.
+> ❌ **Skipped** — OpenSRE was listed as an optional reference architecture. We never depended on it during the build. If you want to explore it as a production reference, clone it separately:
+> ```bash
+> git clone https://github.com/Tracer-Cloud/opensre \
+>   ~/workspace/claude-code/ai-journey/opensre-upstream
+> ```
+> Don't install it inside `aiops-platform/`. It is not a dependency of any agent in this platform.
 
 ---
 
@@ -515,38 +508,54 @@ uv pip install mcp   # MCP Python SDK for building the Prometheus MCP server
 
 ## Day 8 — SAST Auto-Fixer + IaC Generator
 
-### OWASP WebGoat (SAST test target)
+### SAST target app (already in repo)
+
+The SAST agent scans a **deliberately vulnerable Flask app** at `agents/sast-auto-fix/targets/vulnerable_app/` — it is already committed. No external clone needed. The app has five planted CWEs: command injection, SQL injection, path traversal, eval injection, and hardcoded credentials.
+
+> **Note:** OWASP WebGoat (Java) was the original plan but was replaced with a custom Python Flask target — easier to patch with the LLM and to validate in Docker without a JVM.
+
+### SAST agent packages
 
 ```bash
-git clone https://github.com/WebGoat/WebGoat \
-  ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/agents/sast-auto-fix/targets/WebGoat
+cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/agents/sast-auto-fix
+uv venv .venv && uv pip install -r requirements.txt --python .venv/bin/python
 ```
 
-- 🔲 WebGoat cloned
+- ✅ SAST agent venv set up
 
-### IaC / RAG stack
+### Semgrep CLI
 
 ```bash
-uv pip install voyageai chromadb langchain-ollama fastapi uvicorn
+brew install semgrep
+semgrep --version
+```
 
+- ✅ `semgrep` installed
+
+### IaC Generator — Terraform CLI
+
+The IaC generator uses **HCL reference templates as grounding** (in `agents/iac-generator/templates/`) and a `terraform validate` loop — no Chroma, no vector store, no Voyage AI. Only the Terraform CLI is required.
+
+```bash
 # Terraform CLI
 brew install terraform
 terraform --version
-
-# Checkov (IaC security scanner)
-pip install checkov --break-system-packages
-checkov --version
 ```
 
-- 🔲 `voyageai` + `chromadb` installed
-- 🔲 `langchain-ollama` installed
-- 🔲 `terraform` CLI installed
-- 🔲 `checkov` installed
-- 🔲 `VOYAGE_API_KEY` set (sign up at [voyageai.com](https://www.voyageai.com))
+- ✅ `terraform` CLI installed
+
+```bash
+cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/agents/iac-generator
+uv venv .venv && uv pip install -r requirements.txt --python .venv/bin/python
+```
+
+- ✅ IaC generator venv set up
+
+> **`checkov`** (IaC security scanner) was listed in the original plan but not wired into the agent — `terraform validate` is the only validation step used. Skip it.
 
 ---
 
-## Day 9 — Alert Correlator + CrewAI Multi-Agent
+## Day 9 — Alert Correlator + Incident Commander
 
 ### pgvector (vector store)
 
@@ -561,15 +570,165 @@ docker run -d \
 docker ps | grep pgvector
 ```
 
-- 🔲 pgvector container running
+- ✅ pgvector container running
 
-### CrewAI
+### Alert Correlator — Python packages + schema
 
 ```bash
-uv pip install crewai crewai-tools
+cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/agents/alert-correlator
+uv venv .venv && uv pip install -r requirements.txt --python .venv/bin/python
 ```
 
-- 🔲 `crewai` installed
+Key packages: `langgraph`, `langchain-anthropic`, `psycopg2-binary`, `pgvector`, `sentence-transformers`, `python-dotenv`, `rich`
+
+- ✅ Alert Correlator venv set up
+
+### sentence-transformers (local embeddings — dev mode)
+
+`sentence-transformers` downloads the `all-MiniLM-L6-v2` model (~80MB) on first run — no API key required.
+
+```bash
+# First run inside the alert-correlator venv will download the model automatically:
+cd agents/alert-correlator
+.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+```
+
+- ✅ Model downloaded and cached
+
+> **Production embeddings:** switch to Voyage AI `voyage-3-lite` (1024 dims, domain-tuned for technical text). Requires:
+> 1. `VOYAGE_API_KEY` set (sign up at [voyageai.com](https://www.voyageai.com))
+> 2. `EMBEDDING_DIM=1024` in `init.sql` (re-run schema)
+> 3. `SIMILARITY_THRESHOLD=0.85` in `.env`
+> 4. Swap `embeddings.py` to use the Voyage AI SDK
+>
+> For development and learning, MiniLM is sufficient. Use `SIMILARITY_THRESHOLD=0.60`.
+
+### Alert Correlator — DB schema
+
+```bash
+# With pgvector container running:
+cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/agents/alert-correlator
+PGPASSWORD=pw psql -h localhost -U postgres -f init.sql
+```
+
+- ✅ Schema created (alerts table with `vector(384)` embedding column + IVFFlat index)
+
+### Alert Correlator — `.env`
+
+```bash
+cp agents/alert-correlator/.env.example agents/alert-correlator/.env
+# Edit and fill in:
+# DB_HOST=localhost, DB_PORT=5432, DB_NAME=postgres, DB_USER=postgres, DB_PASSWORD=pw
+# ANTHROPIC_API_KEY=sk-ant-...
+# SIMILARITY_THRESHOLD=0.60          # for MiniLM (use 0.85 for Voyage AI)
+# CORRELATION_WINDOW_MINUTES=30
+```
+
+- ✅ `.env` configured
+
+### Verify Alert Correlator end-to-end
+
+```bash
+# Run the OOM cascade scenario — should produce 1 incident, 0 noise
+make correlate SCENARIO=oom_cascade
+make correlate SCENARIO=noise         # should produce 0 incidents (co-location filter works)
+```
+
+- ✅ `oom_cascade` produces 1 incident cluster
+- ✅ `noise` produces 0 incidents
+
+### kind cluster (carried over from Day 6/7)
+
+The `doctor-lab` kind cluster created in Day 6 is reused for the Incident Commander.
+
+```bash
+# If cluster is not running, recreate it:
+make cluster-up
+
+# Verify:
+kubectl --context kind-doctor-lab get nodes
+kubectl --context kind-doctor-lab get pods -n doctor-lab
+```
+
+- ✅ `kind-doctor-lab` cluster running with OOM + CrashLoop fixtures in `doctor-lab` namespace
+
+### Incident Commander — Python packages
+
+```bash
+cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/agents/incident-commander
+uv venv .venv && uv pip install -r requirements.txt --python .venv/bin/python
+```
+
+Key packages: `crewai>=0.80.0`, `crewai-tools`, `langsmith`, `python-dotenv`, `rich`, `pydantic`, `requests`
+
+> **CrewAI version matters:** `>=0.80.0` changed the `Agent(llm=...)` parameter. Use `crewai.LLM(model="anthropic/claude-sonnet-4-6")` — NOT `langchain_anthropic.ChatAnthropic`. The old import raises a Pydantic `ValidationError` at startup.
+
+- ✅ Incident Commander venv set up
+
+### Incident Commander — `.env`
+
+```bash
+cp agents/incident-commander/.env.example agents/incident-commander/.env
+# Fill in:
+```
+
+```env
+ANTHROPIC_API_KEY=sk-ant-...
+KUBE_CONTEXT=kind-doctor-lab          # kubectl context name
+KUBECONFIG=/Users/<you>/.kube/config  # NOTE: python-dotenv does NOT expand ~
+                                       # Use the full absolute path, not ~/...
+REQUIRE_HUMAN_APPROVAL=true           # set to false to skip terminal prompt (CI/demo)
+PROMETHEUS_URL=http://localhost:9090  # Prometheus not running in kind by default — errors are non-fatal
+SLACK_BOT_TOKEN=                      # Leave empty for dev mode (prints card to stdout)
+SLACK_INCIDENT_CHANNEL=#incidents
+LANGSMITH_API_KEY=lsv2_...
+LANGSMITH_TRACING=true
+LANGSMITH_PROJECT=aiops-incident-commander
+```
+
+- ✅ `.env` configured
+
+> **Slack dev mode:** if `SLACK_BOT_TOKEN` is empty or unset, `post_incident_card` prints the Block Kit JSON to stdout instead of posting to Slack. This is expected behaviour for local development — you'll see the card in the terminal.
+
+> **KUBECONFIG path:** Python's `os.environ.get()` does NOT shell-expand `~`. The code uses `os.path.expanduser()` to handle this, but it is safer to write the full absolute path in `.env` (e.g. `/Users/rutwick/.kube/config`).
+
+### Approval gate — create a real Deployment for testing
+
+The human approval gate only fires when the Mitigator calls a mutating kubectl tool (`restart_deployment`, `patch_resource_limits`, `scale_deployment`). These tools require a **Deployment** (not a bare Pod). Create one:
+
+```bash
+# Create a Deployment that OOMKills (memory limit too low for its actual usage)
+kubectl --context kind-doctor-lab delete pod oom-demo -n doctor-lab --ignore-not-found
+kubectl --context kind-doctor-lab create deployment oom-demo \
+  --image=polinux/stress --namespace=doctor-lab \
+  -- stress --vm 1 --vm-bytes 200M --vm-keep
+kubectl --context kind-doctor-lab set resources deployment oom-demo \
+  --namespace=doctor-lab --limits=memory=64Mi --requests=memory=32Mi
+
+# Wait ~30s, then verify it's OOMKilling:
+kubectl --context kind-doctor-lab get pods -n doctor-lab
+# Should show STATUS=OOMKilled or CrashLoopBackOff
+```
+
+- ✅ `oom-demo` Deployment created and OOMKilling
+
+### Verify Incident Commander end-to-end
+
+```bash
+cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/agents/incident-commander
+
+# Demo mode (uses hardcoded incident, no correlator needed):
+REQUIRE_HUMAN_APPROVAL=true .venv/bin/python respond.py --demo oom --verbose
+# Watch for: "🔧 MUTATING TOOL CALLED: patch_resource_limits(...)"
+# Then: "⚠️  APPROVAL REQUIRED — Approve? [yes/no]:"
+
+# Full pipeline (Alert Correlator → Incident Commander):
+make respond SCENARIO=oom_cascade
+```
+
+- ✅ Demo mode runs — Triage + Investigator + Mitigator + Communicator all execute
+- ✅ Approval gate prompts at terminal when a mutating tool is called
+- ✅ Slack card printed to stdout (dev mode)
 
 ---
 
@@ -614,31 +773,147 @@ uv pip install python-nmap
 ### Demo recording
 
 ```bash
-brew install asciinema
-# agg converts asciinema recordings to GIFs
-cargo install agg   # requires Rust; OR use `vhs` (below)
-
-# Alternative: vhs (easier, no Rust needed)
-brew install vhs
+# vhs records terminal sessions to animated gifs (no Rust required)
+brew install vhs ffmpeg
 ```
 
-- 🔲 `asciinema` installed
-- 🔲 `agg` or `vhs` installed
+Tape scripts are already at `aiops-platform/demos/`. Record from the repo root:
+
+```bash
+cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform
+
+vhs demos/log-triage.tape           # → demos/log-triage.gif
+vhs demos/k8s-doctor.tape           # → demos/k8s-doctor.gif
+vhs demos/incident-commander.tape   # → demos/incident-commander.gif
+```
+
+Verify each gif before embedding:
+```bash
+ls -lh demos/*.gif          # should be 500KB–5MB each
+open demos/log-triage.gif   # opens in browser/Preview — watch it loops cleanly
+```
+
+- 🔲 `vhs` and `ffmpeg` installed
+- 🔲 3 gifs recorded and verified
+- 🔲 Gif `<img>` tags embedded in each agent README
+
+---
 
 ### Micro-SaaS scaffold
 
-```bash
-# Next.js frontend
-npx create-next-app@latest \
-  ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/saas/web \
-  --typescript --tailwind --app
+The scaffold is already built — this section covers setup, running, and verification only.
 
-# FastAPI backend
-uv pip install fastapi uvicorn sse-starlette
+**Backend (`saas/api/`)**
+
+```bash
+cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/saas/api
+uv venv && source .venv/bin/activate
+uv pip install -r requirements.txt
+cp .env.example .env
 ```
 
-- 🔲 `saas/web` created (Next.js)
-- 🔲 FastAPI backend packages installed
+Start the server (keep this terminal open):
+```bash
+uvicorn main:app --reload --port 8080
+```
+
+Expected: `Uvicorn running on http://0.0.0.0:8080 | Application startup complete.`
+
+**Frontend (`saas/web/`)**
+
+```bash
+cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/saas/web
+npm install
+cp .env.local.example .env.local
+```
+
+> ⚠️ After `npm install` you may see audit warnings. Do NOT run `npm audit fix --force` —
+> it attempts a Next.js major version jump (14 → 16) which breaks the app.
+> Safe fix if needed: `npm install next@14.2.29`
+
+Start the dev server (keep this terminal open):
+```bash
+npm run dev
+```
+
+Expected: `▲ Next.js 14.x — Local: http://localhost:3000 — Ready`
+
+**Verify end-to-end (new terminal)**
+
+```bash
+# 1. Health check
+curl -s http://localhost:8080/healthz
+# → {"status":"ok","version":"0.1.0"}
+
+# 2. Watch the full SSE stream
+curl -s -X POST http://localhost:8080/runs \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Create an AWS VPC with two public subnets", "provider": "aws"}'
+# → event: init → event: status → 5 × event: node → 4 × event: file → event: done
+
+# 3. Capture run_id from the init event body, then poll result
+RUN_ID=$(curl -s -X POST http://localhost:8080/runs \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Create an AWS VPC", "provider": "aws"}' \
+  | awk '/^data:/{print; exit}' \
+  | python3 -c "import sys,json; print(json.loads(sys.stdin.read().split('data: ',1)[1])['run_id'])")
+echo "Run ID: $RUN_ID"
+curl -s http://localhost:8080/runs/$RUN_ID | python3 -m json.tool
+# → {"status":"completed","result":{"file_count":4,"terraform_valid":true},...}
+```
+
+> **Why extract run_id this way?** FastAPI's `StreamingResponse` only writes the `X-Run-Id` header
+> to disk when the body goes to a real file — `curl -D /dev/null` discards it. Extracting from the
+> first `data:` line of the SSE body (the `init` event) is the reliable method.
+
+Open `http://localhost:3000` in a browser — type a prompt, click Generate, watch pipeline dots go green and `.tf` files stream in.
+
+---
+
+**Linting and type-checking**
+
+Run all static checks from the `aiops-platform/` root:
+
+```bash
+cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform
+
+# Python lint — saas/api (ruff is a dev tool, not in requirements.txt)
+source saas/api/.venv/bin/activate
+pip install ruff --break-system-packages
+python -m ruff check saas/api/
+# → All checks passed.
+deactivate
+
+# ESLint setup — one-time only (Next.js 14 requires pinned versions)
+# .eslintrc.json already exists at saas/web/.eslintrc.json
+cd saas/web
+npm install --save-dev eslint@^8 eslint-config-next@14.2.29
+npm run lint
+# → ✓ No ESLint warnings or errors
+
+# TypeScript type-check
+npm run type-check
+# → Found 0 errors.
+```
+
+> **ESLint version note:** `npm run lint` (`next lint`) without an existing `.eslintrc.json`
+> triggers an interactive installer that pulls `eslint-config-next@latest` — which is now v16
+> (incompatible with Next.js 14). The fix: always have `.eslintrc.json` in place first and
+> explicitly pin `eslint-config-next@14.2.29`. Both are already done in this repo.
+
+**Checklist:**
+
+- 🔲 Backend venv created and `requirements.txt` installed
+- 🔲 `uvicorn main:app --reload --port 8080` starts without errors
+- 🔲 `curl http://localhost:8080/healthz` returns `{"status":"ok"}`
+- 🔲 SSE stream from `POST /runs` emits `event: done` with `file_count: 4`
+- 🔲 `GET /runs/$RUN_ID` returns `status: completed`
+- 🔲 Frontend `npm install` completes (use `next@14.2.29` if audit fix needed)
+- 🔲 `npm run dev` starts at `localhost:3000`
+- 🔲 `python -m ruff check saas/api/` exits 0
+- 🔲 `npm run lint` exits 0 (requires `eslint@^8` + `eslint-config-next@14.2.29` installed)
+- 🔲 `npm run type-check` exits 0
+- 🔲 Browser UI streams events and renders 4 generated `.tf` files
 
 ---
 
@@ -656,17 +931,22 @@ All paths are absolute. `~/workspace/claude-code/ai-journey/` is the project roo
 
 ## Environment variables — master list
 
-| Variable | Used by | Where to get it | Set? |
+| Variable | Used by | Where to get it / value | Set? |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | All agents | [console.anthropic.com](https://console.anthropic.com) | 🔲 |
-| `GITHUB_TOKEN` | PR Reviewer (Day 4) | GitHub → Settings → Developer tokens | 🔲 |
-| `SLACK_BOT_TOKEN` | Slack Bot (Day 5) | api.slack.com/apps | 🔲 |
-| `SLACK_APP_TOKEN` | Slack Bot (Day 5) | api.slack.com/apps (socket mode) | 🔲 |
-| `LANGSMITH_API_KEY` | LangSmith tracing (Day 2+ LangChain backend, Day 5 bot) | smith.langchain.com | 🔲 |
+| `OPENROUTER_API_KEY` | All agents (multi-provider) | [openrouter.ai/keys](https://openrouter.ai/keys) | 🔲 |
+| `GITHUB_TOKEN` | PR Reviewer (Day 4) | GitHub → Settings → Developer tokens (`repo` + `pull_request` scopes) | 🔲 |
+| `SLACK_BOT_TOKEN` | Slack Bot (Day 5), Incident Commander (Day 9) | api.slack.com/apps — leave empty for dev mode (prints to stdout) | 🔲 |
+| `SLACK_APP_TOKEN` | Slack Bot (Day 5) | api.slack.com/apps (socket mode — `xapp-` prefix) | 🔲 |
+| `SLACK_INCIDENT_CHANNEL` | Incident Commander (Day 9) | e.g. `#incidents` | 🔲 |
+| `LANGSMITH_API_KEY` | LangSmith tracing (Day 2+ LangChain, Day 5+) | smith.langchain.com | 🔲 |
 | `LANGSMITH_TRACING` | LangSmith tracing | Set to `true` | 🔲 |
 | `LANGSMITH_PROJECT` | LangSmith tracing | Set to `aiops-platform` or per-agent name | 🔲 |
-| `VOYAGE_API_KEY` | IaC Generator (Day 8) | voyageai.com | 🔲 |
-| `OPENROUTER_API_KEY` | All agents (multi-provider) | [openrouter.ai/keys](https://openrouter.ai/keys) | 🔲 |
+| `VOYAGE_API_KEY` | Alert Correlator — **production only** (Day 9) | voyageai.com — not needed for dev (MiniLM used by default) | 🔲 |
+| `PROMETHEUS_URL` | Alert Correlator + Incident Commander (Day 9) | Default: `http://localhost:9090` — Prometheus errors are non-fatal | 🔲 |
+| `KUBE_CONTEXT` | Incident Commander (Day 9) | kubectl context name — e.g. `kind-doctor-lab` | 🔲 |
+| `KUBECONFIG` | Incident Commander (Day 9) | Full absolute path to kubeconfig — e.g. `/Users/you/.kube/config` (do NOT use `~`) | 🔲 |
+| `REQUIRE_HUMAN_APPROVAL` | Incident Commander (Day 9) | `true` (default — terminal prompt before kubectl mutations) or `false` (CI/demo bypass) | 🔲 |
 
 ---
 
@@ -752,6 +1032,6 @@ If both blocks pass, your full stack is validated. Proceed to `SCHEDULE.md` Day 
 
 ---
 
-*Last updated: 2026-05-09 · Updated through Day 5 · Proceed to [`SCHEDULE.md`](SCHEDULE.md) Day 1 once verification passes*
+*Last updated: 2026-05-19 · Updated through Day 9 · Proceed to [`SCHEDULE.md`](SCHEDULE.md) Day 1 once verification passes*
 
 > 📁 This file lives in `docs/SETUP.md`. Root-level references point here.

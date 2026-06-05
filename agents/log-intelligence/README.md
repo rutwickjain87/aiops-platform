@@ -1,5 +1,10 @@
 # log-intelligence — Log Triage Agent
 
+<p align="center">
+  <img src="../../demos/log-triage.gif" alt="Log Triage Agent demo" width="900">
+  <br><em>Agent triages a 2 000-line HDFS log → structured Markdown report → 5/5 eval pass</em>
+</p>
+
 Reads a log file, clusters anomalies, and emits a structured Markdown triage report.
 Supports three fully independent backends selectable at runtime via `--backend`.
 

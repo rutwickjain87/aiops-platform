@@ -3,8 +3,8 @@
 > **LangGraph-powered Kubernetes failure diagnosis agent.** Given a broken deployment, it runs `kubectl` and Prometheus tools, reasons over the signals, and produces a structured root-cause + remediation report in under 2 minutes.
 
 <p align="center">
-  <!-- Replace with: asciinema rec, then vhs to convert to gif -->
-  <em>demo gif — run <code>make run-k8s-doctor</code> against a CrashLoopBackOff pod</em>
+  <img src="../../demos/k8s-doctor.gif" alt="K8s Doctor demo" width="900">
+  <br><em>LangGraph observe→hypothesize→propose pipeline diagnosing CrashLoopBackOff and OOMKilled</em>
 </p>
 
 ---

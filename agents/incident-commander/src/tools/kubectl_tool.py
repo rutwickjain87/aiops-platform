@@ -8,15 +8,24 @@ import os
 import subprocess
 import logging
 from crewai.tools import tool
+from rich.console import Console
 
 log = logging.getLogger(__name__)
+_console = Console()
 
 _REQUIRE_APPROVAL = os.environ.get("REQUIRE_HUMAN_APPROVAL", "true").lower() != "false"
+_KUBE_CONTEXT = os.environ.get("KUBE_CONTEXT", "")
+_KUBECONFIG   = os.path.expanduser(os.environ.get("KUBECONFIG", ""))  # expands ~ → /Users/...
 
 
 def _kubectl(args: list[str], timeout: int = 30) -> str:
     """Run kubectl with the given args, return combined stdout+stderr."""
-    cmd = ["kubectl"] + args
+    cmd = ["kubectl"]
+    if _KUBE_CONTEXT:
+        cmd += ["--context", _KUBE_CONTEXT]
+    if _KUBECONFIG:
+        cmd += ["--kubeconfig", _KUBECONFIG]
+    cmd += args
     log.debug("kubectl %s", " ".join(args))
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -114,11 +123,23 @@ def get_deployment_status(namespace_and_deployment: str) -> str:
 def _approval_gate(action: str) -> bool:
     """Prompt the human operator for approval. Returns True if approved."""
     if not _REQUIRE_APPROVAL:
+        _console.print(f"[yellow]⚠️  Human approval bypassed (REQUIRE_HUMAN_APPROVAL=false)[/yellow]")
         log.warning("Human approval bypassed (REQUIRE_HUMAN_APPROVAL=false)")
         return True
-    print(f"\n⚠️  APPROVAL REQUIRED\nAction: {action}\nApprove? [yes/no]: ", end="", flush=True)
-    answer = input().strip().lower()
-    return answer in ("yes", "y")
+    _console.print(f"\n[bold red]⚠️  APPROVAL REQUIRED[/bold red]")
+    _console.print(f"[bold]Action:[/bold] {action}")
+    _console.print("[bold]Approve? \\[yes/no]:[/bold] ", end="")
+    try:
+        answer = input().strip().lower()
+    except EOFError:
+        _console.print("[red]EOFError reading stdin — rejecting action for safety[/red]")
+        return False
+    approved = answer in ("yes", "y")
+    if approved:
+        _console.print("[green]✅ Approved — executing action[/green]")
+    else:
+        _console.print("[red]❌ Rejected — action aborted[/red]")
+    return approved
 
 
 @tool("restart_deployment")
@@ -128,6 +149,7 @@ def restart_deployment(namespace_and_deployment: str) -> str:
     REQUIRES human approval before execution.
     Input format: "<namespace>/<deployment-name>".
     """
+    _console.print(f"\n[bold cyan]🔧 MUTATING TOOL CALLED: restart_deployment({namespace_and_deployment})[/bold cyan]")
     parts = namespace_and_deployment.strip().split("/")
     if len(parts) != 2:
         return "ERROR: expected 'namespace/deployment'"
@@ -145,6 +167,7 @@ def scale_deployment(namespace_deployment_replicas: str) -> str:
     REQUIRES human approval before execution.
     Input format: "<namespace>/<deployment-name>/<replica-count>".
     """
+    _console.print(f"\n[bold cyan]🔧 MUTATING TOOL CALLED: scale_deployment({namespace_deployment_replicas})[/bold cyan]")
     parts = namespace_deployment_replicas.strip().split("/")
     if len(parts) != 3:
         return "ERROR: expected 'namespace/deployment/replicas'"
@@ -162,6 +185,7 @@ def patch_resource_limits(namespace_pod_limits: str) -> str:
     REQUIRES human approval before execution.
     Input format: "<namespace>/<deployment-name>/<memory-limit>" (e.g. payments/payments-api/1Gi).
     """
+    _console.print(f"\n[bold cyan]🔧 MUTATING TOOL CALLED: patch_resource_limits({namespace_pod_limits})[/bold cyan]")
     parts = namespace_pod_limits.strip().split("/")
     if len(parts) != 3:
         return "ERROR: expected 'namespace/deployment/memory-limit'"

@@ -105,7 +105,8 @@ Produce a root cause report:
     mitigate_task = Task(
         description=f"""
 Given the triage report and root cause investigation for incident {incident_id},
-propose and (with human approval) apply the most appropriate remediation.
+you MUST propose AND then actually call a kubectl tool to apply the remediation.
+Do NOT just describe what you would do — you must invoke the tool.
 
 Context:
 - Incident: {incident_id} ({severity}) — {title}
@@ -113,23 +114,31 @@ Context:
 
 Steps:
 1. Review the triage and investigation findings (from previous tasks)
-2. Propose a specific remediation plan (e.g., restart deployment, scale up, increase memory limit)
-3. Present the plan clearly: what you will do, why, and expected outcome
-4. Execute the plan using the appropriate kubectl tool
-   - restart_deployment: for CrashLoopBackOff / OOMKilled after config fix
-   - scale_deployment: for capacity issues
-   - patch_resource_limits: for OOMKilled with insufficient memory limits
-   Note: REQUIRE_HUMAN_APPROVAL=true means you must wait for operator approval
-5. Verify the fix: check pod status and logs again after the remediation
+2. Check what deployments exist: call get_deployment_status with namespace '{namespace}'
+3. Choose the correct mutating tool and CALL IT — do not just write about it:
+   - patch_resource_limits: FIRST choice for OOMKilled — increases memory limit
+     Input: "<namespace>/<deployment-name>/<new-memory-limit>" e.g. "{namespace}/oom-demo/256Mi"
+   - restart_deployment: for CrashLoopBackOff where config is already correct
+     Input: "<namespace>/<deployment-name>"
+   - scale_deployment: for capacity/replica issues
+     Input: "<namespace>/<deployment-name>/<replica-count>"
+4. The tool will pause and ask for human approval at the terminal — this is expected.
+   Wait for the operator to type yes or no before continuing.
+5. After the tool returns, verify by calling get_pods_in_namespace('{namespace}')
+
+IMPORTANT: You MUST call at least one of patch_resource_limits, restart_deployment,
+or scale_deployment. Writing "I would patch the limits" is NOT sufficient —
+you must actually invoke the tool.
 
 Produce a mitigation report:
-- Action proposed
-- Action taken (or "Pending human approval")
-- Outcome / verification result
+- Deployment found (name)
+- Tool called (exact tool name and input)
+- Approval decision (approved / rejected)
+- Outcome / verification result (pod status after fix)
         """,
         expected_output=(
-            "A mitigation report with: action proposed, action taken (or pending approval status), "
-            "verification result (pod status after fix)."
+            "A mitigation report confirming: which deployment was found, which tool was called "
+            "with what input, whether the operator approved, and the pod status after the action."
         ),
         agent=mitigator_agent,
         context=[triage_task, investigate_task],

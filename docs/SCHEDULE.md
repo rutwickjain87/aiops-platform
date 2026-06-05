@@ -46,10 +46,13 @@ These files exist already — read them before running them.
 | **Anthropic API** | Primary model (Sonnet 4.6 for planning, Haiku 4.5 for cheap loops) | All days |
 | **OpenRouter** | Multi-provider access layer — Anthropic + OpenAI + Mistral + Llama via one API | All days (Day 1 setup, active from Day 3) |
 | **LangChain** | Tool-calling agents, simple ReAct loops, integrations | 2, 3, 4, 5 |
-| **LangGraph** | State-machine agents, branching, retries, multi-step planning | 6, 7, 8, 9, 10 |
-| **CrewAI** | Multi-agent orchestration with role-playing specialists | 9, 10 |
+| **LangGraph** | State-machine agents, branching, retries, multi-step planning | 6, 7, 8, 9 |
+| **CrewAI** | Multi-agent orchestration with role-playing specialists | 9 |
+| **sentence-transformers** | Local embeddings (all-MiniLM-L6-v2) — no API key, dev-only | 9 |
+| **Voyage AI** | Domain-tuned embeddings for production (voyage-3-lite, 1024 dims) | 9 (production switch) |
+| **pgvector** | Vector similarity search in Postgres — alert correlation | 9 |
 | **Ollama** | Local fallback model for offline iteration | 1 (setup), 8 |
-| **OpenSRE** | Optional reference architecture — skim if curious, don't depend on it | Optional (Day 1 setup, Day 7 PR optional) |
+| **OpenSRE** | Optional reference architecture — skipped, not a dependency | ❌ Skipped |
 
 ---
 
@@ -64,8 +67,8 @@ These files exist already — read them before running them.
 | 5 | Slack Incident Bot + Observability (LangSmith + Prom) | Reaction → channel + full traces visible | Intermediate |
 | 6 | K8s Doctor Foundation (LangGraph) | Diagnoses CrashLoopBackOff via state-machine pipeline | Intermediate |
 | 7 | K8s Doctor Polish + Multi-Model Routing (+ Optional: OpenSRE PR) | 3 failure modes + model routing experiment + optional upstream PR | Intermediate |
-| 8 | SAST Auto-Fixer + IaC Generator | One auto-PR + Terraform from NL (OpenRouter for cheap iteration) | Intermediate |
-| 9 | Alert Correlator + Multi-Agent SRE Team start (CrewAI) | Synthetic correlation + 4 agents tracing | Intermediate→Advanced |
+| 8 | SAST Auto-Fixer + IaC Generator | One auto-PR on custom vulnerable Flask app + Terraform from NL passing `terraform validate` | Intermediate |
+| 9 | Alert Correlator (pgvector + MiniLM) + Incident Commander (CrewAI 4-agent) | OOM cascade → 1 incident cluster + 4-agent crew with working human approval gate | Intermediate→Advanced |
 | 10 | Multi-Agent finish + Pentest Agent (lab) | E2E incident response + pentest finds 1+ CVE | Advanced |
 | 11 | Demos + Micro-SaaS scaffold + Multi-Provider Comparison | 3 flagship gifs + SaaS skeleton + OpenRouter benchmark published | Advanced |
 
@@ -681,77 +684,96 @@ EXP=~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/experi
 
 **Morning — SAST Auto-Fixer (`aiops-platform/agents/sast-auto-fix/`):**
 
-- 🔲 Clone OWASP WebGoat as test target:
-  ```bash
-  git clone https://github.com/WebGoat/WebGoat \
-    ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/agents/sast-auto-fix/targets/WebGoat
-  ```
-- 🔲 LangGraph agent with tools: `clone_repo`, `run_semgrep`, `read_file`, `write_file`, `git_diff`, `run_tests_in_docker` (sandboxed: `--network=none`), `open_pr`
-- 🔲 Loop: scan → pick top finding → generate fix → run tests in sandbox → if pass, commit; if not, retry up to 2×
-- 🔲 Verify on at least 1 finding that lands a clean PR
+- ✅ Deliberately vulnerable Flask app already in `targets/vulnerable_app/` (5 planted CWEs: command injection, SQL injection, path traversal, eval injection, hardcoded credentials)
+- ✅ LangGraph pipeline: `scan → pick → read_ctx → fix → validate → open_pr` with retry edge (max 2 retries)
+- ✅ Tools: `run_semgrep`, `read_file`, `write_file`, `git_diff`, `run_tests_in_docker` (Docker sandbox `--network=none --read-only`)
+- ✅ Verified: agent opens a clean PR with passing tests on first or second attempt
+
+> **Key learnings from Day 8:**
+> - Docker read-only mount requires `-p no:cacheprovider` for pytest and `APP_DB_PATH=/tmp/app.db` for SQLite
+> - `load_dotenv(override=True)` is required — without it, stale shell tokens silently win over `.env`
+> - LLM chain-of-thought text must be stripped before writing the fixed file (`_strip_non_python_prefix()`)
+> - `git push --force` (not `--force-with-lease`) because ephemeral fix branches have no remote ref on first push
 
 **Afternoon — IaC Generator (`aiops-platform/agents/iac-generator/`):**
 
-- 🔲 FastAPI service; `uv pip install voyageai chromadb langchain-ollama`
-- 🔲 Index 10–20 Terraform AWS module READMEs into Chroma (Voyage embeddings)
-- 🔲 LangChain agent with **two backends via OpenRouter**:
-  - `anthropic/claude-sonnet-4-6` for production-quality output
-  - `openai/gpt-4o-mini` or `mistralai/mistral-7b-instruct` for cheap dev iteration
-- 🔲 Tools: `retrieve_module_docs`, `terraform_validate`, `checkov_scan`, `write_file`
-- 🔲 Loop: generate → validate → repair (max 5)
-- 🔲 Test 3 prompts: simple S3 bucket, 3-tier app, VPC with peering
+- ✅ 5-node LangGraph pipeline: `clarify → plan → generate → validate → output`
+- ✅ **HCL reference templates** in `templates/` used as grounding — NOT Chroma/ChromaDB/Voyage embeddings (those were the original plan; replaced with simpler template-based approach)
+- ✅ Tools: `terraform_tool.py` (runs `terraform init -backend=false` + `terraform validate`), `file_tool.py` (writes `.tf` files to disk)
+- ✅ Retry loop: validation errors fed back verbatim to generate node for targeted repair (max 3 attempts)
+- ✅ First real run: `terraform validate` passed on first attempt — 8 files generated (providers.tf through outputs.tf)
+
+> **Note:** No Chroma, no voyageai, no langchain-ollama used — those were cut. The planning step (ordered resource dependency list) + HCL templates proved sufficient grounding without a vector store.
 
 ✅ **Progress check:**
 
-- [ ] SAST agent opens a real PR with passing tests
-- [ ] Sandbox is verifiably isolated (`curl example.com` inside container fails)
-- [ ] IaC agent (Sonnet): 2 of 3 prompts produce `terraform validate`-clean output
-- [ ] IaC agent (cheap model via OpenRouter): completes the same loop — slower/lower quality is fine
+- ✅ SAST agent opens a real PR with tests passing in Docker sandbox
+- ✅ Sandbox is verifiably isolated (`--network=none` blocks external calls)
+- ✅ IaC agent: NL prompt → 8 Terraform files → `terraform validate` passes
+- ✅ Retry logic: validation errors returned to generate node for targeted repair
 
 💡 **Helpful tips:**
 
-- **Code-edit is hard.** Cap `MAX_STEPS=8`; feel the limitation.
-- **Use `git diff` as a tool, not `read_file → modify → write_file`.** The diff is the artifact.
-- **Cheap model iteration via OpenRouter is the right move for IaC.** You'll regenerate Terraform 50× tuning prompts. Routing to `gpt-4o-mini` costs ~10× less per call than Sonnet.
+- **Code-edit is hard.** The LLM sometimes prepends reasoning text before the code — always strip non-code prefix before writing to disk.
+- **The planning node is the biggest quality lever for IaC.** Without an ordered resource dependency list, the LLM generates resources in random order and misses dependencies.
+- **`git push --force` not `--force-with-lease`** for new ephemeral branches — `force-with-lease` fails when there is no remote ref to compare against.
 
 ---
 
-## Day 9 — Alert Correlator + Multi-Agent SRE Team Start (CrewAI)
+## Day 9 — Alert Correlator + Incident Commander (CrewAI 4-agent)
 
-🎯 **Goal:** Synthetic alert stream produces clustered incident docs with confidence scores. Four CrewAI specialist agents defined; orchestrator runs one incident through and the LangSmith trace is clean.
+🎯 **Goal:** Alert Correlator producing clustered incidents end-to-end. Full Incident Commander crew running with working human approval gate. End-to-end pipeline verified: `make respond SCENARIO=oom_cascade`.
 
-📚 **Topic of the day:** Hybrid retrieval (time + semantic). Multi-agent orchestration. Reading every trace as a habit.
+📚 **Topic of the day:** Vector similarity as a correlation signal. Union-find clustering. Multi-agent orchestration with task context dependencies. Human-in-the-loop (HITL) safety gates.
 
 ⚙️ **Tasks:**
 
 **Morning — Alert Correlator (`aiops-platform/agents/alert-correlator/`):**
 
-- 🔲 `docker run -d --name pgvector -p 5432:5432 -e POSTGRES_PASSWORD=pw pgvector/pgvector:pg16`
-- 🔲 Synthetic alert generator: emits Prometheus AlertManager-format alerts at varying rates
-- 🔲 Embed each alert (Voyage AI); store in pgvector with `(timestamp, service, embedding)`
-- 🔲 LangGraph correlation: on each new alert, find similar in last 15 min → cluster → emit JSON incident doc
+- ✅ pgvector running in Docker (`pgvector/pgvector:pg16`, port 5432)
+- ✅ Schema initialised with `init.sql` — `alerts` table with `vector(384)` column + IVFFlat cosine index
+- ✅ Synthetic alert generator (`synthetic/generate_alerts.py`) — 4 scenarios: `oom_cascade`, `node_pressure`, `security_incident`, `noise`
+- ✅ LangGraph pipeline: `ingest → embed → query_similar → cluster → emit_incident`
+  - **embed**: `all-MiniLM-L6-v2` (384 dims, local, no API key) — use Voyage AI `voyage-3-lite` for production
+  - **query_similar**: cosine search `1-(embedding<=>query::vector)`, time-bounded to `CORRELATION_WINDOW_MINUTES=30`, co-location pre-filter (namespace/service/node must match before vector comparison)
+  - **cluster**: union-find merges overlapping similarity groups transitively
+  - **emit_incident**: Claude Haiku generates incident title + root cause + summary per cluster
+- ✅ Verified: `oom_cascade` → 1 incident, `noise` → 0 incidents (co-location filter working)
 
 **Afternoon — Incident Commander (`aiops-platform/agents/incident-commander/`):**
 
-- 🔲 `uv pip install crewai crewai-tools`
-- 🔲 Define 4 agents (Triage, Investigator, Mitigator, Communicator) with role/goal/backstory
-- 🔲 Orchestrator: triage → parallel(investigate, communicate) → mitigate
-- 🔲 Wire your existing tools (kubectl from K8s Doctor, log triage from Day 2) as CrewAI tools
-- 🔲 Run against ONE incident (`high-error-rate-checkout`); read the LangSmith trace
-- 🔲 Log $/incident — the CrewAI multi-agent cost will surprise you
+- ✅ 4 CrewAI agents with role/goal/backstory and `crewai.LLM` (not LangChain ChatAnthropic — removed in CrewAI ≥ 0.80)
+  - **Triage** (Sonnet): `get_pods_in_namespace`, `get_events`, `get_node_status` — classifies blast radius
+  - **Investigator** (Sonnet): `get_pod_logs`, `describe_pod`, all Prometheus tools — root cause + confidence level
+  - **Mitigator** (Sonnet): `get_deployment_status`, `restart_deployment`, `patch_resource_limits`, `scale_deployment` — proposes + executes fix
+  - **Communicator** (Haiku): `post_incident_card`, `post_resolution_update` — formats Slack card
+- ✅ Execution order: Triage + Investigator run in parallel (no `context` dep) → Mitigator waits for both (`context=[triage_task, investigate_task]`) → Communicator waits for all three
+- ✅ Human approval gate: `REQUIRE_HUMAN_APPROVAL=true` — `_approval_gate()` blocks at terminal with `⚠️ APPROVAL REQUIRED / Approve? [yes/no]:`
+- ✅ Sentinel prints on all mutating tools — `🔧 MUTATING TOOL CALLED: patch_resource_limits(...)` confirms the tool was actually invoked (not just described in text)
+- ✅ Slack dev mode: `SLACK_BOT_TOKEN` empty → prints Block Kit JSON to stdout
+
+**End-to-end pipeline:**
+
+- ✅ `make respond SCENARIO=oom_cascade` — runs Alert Correlator then pipes output to Incident Commander
+- ✅ `make respond --demo oom` — Incident Commander demo mode (no correlator needed)
 
 ✅ **Progress check:**
 
-- [ ] Alert correlator clusters synthetic alerts; confidence scores look directionally right
-- [ ] LangSmith trace shows all 4 CrewAI agents with clear handoffs
-- [ ] You can explain *why* Investigator and Communicator ran in parallel
-- [ ] Total $/incident logged and < $0.50
+- ✅ `make correlate SCENARIO=oom_cascade` produces exactly 1 incident cluster
+- ✅ `make correlate SCENARIO=noise` produces 0 incidents (co-location pre-filter rejects cross-namespace structural matches)
+- ✅ Incident Commander demo runs all 4 agents end-to-end against the `kind-doctor-lab` cluster
+- ✅ `🔧 MUTATING TOOL CALLED` sentinel appears in output — proves the tool was invoked, not just described
+- ✅ `⚠️ APPROVAL REQUIRED` prompt blocks at terminal when `REQUIRE_HUMAN_APPROVAL=true`
+- ✅ Slack card printed to stdout (dev mode — no real token needed)
+- ✅ You can explain: why Triage and Investigator run in parallel, why the Communicator uses Haiku
 
-💡 **Helpful tips:**
+💡 **Key lessons from Day 9:**
 
-- **CrewAI's `verbose=True` is your friend today.**
-- **Consider routing the Communicator agent to a cheaper model** — it writes Slack summaries, not diagnoses. One-line change via OpenRouter.
-- **pgvector is faster than Chroma at this volume.**
+- **Threshold is model-specific.** MiniLM similarity range for related alerts: 0.50–0.70 → use `SIMILARITY_THRESHOLD=0.60`. Voyage AI range: 0.80–0.92 → use `0.85`. Never share thresholds across embedding models.
+- **Co-location pre-filter is essential.** Vector similarity measures text angle, not blast radius. Two alerts from different namespaces can score above threshold purely from structural similarity ("X is down"). The namespace/service/node SQL gate prevents false grouping.
+- **Agent text ≠ tool invocation.** An agent writing "I will restart the deployment" is not the same as calling `restart_deployment`. Only sentinel instrumentation at the tool boundary is reliable evidence. Use `output_pydantic` on the Task for structural validation in production.
+- **CrewAI ≥ 0.80 breaking change:** `Agent(llm=ChatAnthropic(...))` raises a Pydantic ValidationError. Use `Agent(llm=LLM(model="anthropic/claude-sonnet-4-6"))` from `crewai`.
+- **`~` in `.env` is not shell-expanded.** `KUBECONFIG=~/.kube/config` stays literal. Use `os.path.expanduser()` in code, or write the full absolute path in `.env`.
 
 ---
 
@@ -814,16 +836,84 @@ EXP=~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/experi
 
 **Afternoon — Micro-SaaS scaffold:**
 
-- 🔲 Create Next.js frontend:
+The scaffold is already built at `aiops-platform/saas/`. Run through these steps to get both tiers live.
+
+*Backend (`saas/api/`) — Terminal 1:*
+- 🔲 Install dependencies and start the API:
   ```bash
-  npx create-next-app@latest \
-    ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/saas/web \
-    --typescript --tailwind --app
+  cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/saas/api
+  uv venv && source .venv/bin/activate
+  uv pip install -r requirements.txt
+  cp .env.example .env          # ANTHROPIC_API_KEY already inherited from shell
+  uvicorn main:app --reload --port 8080
   ```
-- 🔲 FastAPI backend at `aiops-platform/saas/api/` wraps the IaC Generator
-- 🔲 Stub endpoints: `POST /runs` (SSE), `GET /runs/:id`, `GET /healthz`
-- 🔲 Stub auth (Supabase) and billing (Stripe metered) — leave clear `TODO` markers
-- 🔲 Architecture diagram in `aiops-platform/saas/README.md`
+  Expected: `Uvicorn running on http://0.0.0.0:8080`
+
+*Frontend (`saas/web/`) — Terminal 2:*
+- 🔲 Install dependencies and start the dev server:
+  ```bash
+  cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/saas/web
+  npm install            # installs Next.js 14, React 18, Tailwind
+  cp .env.local.example .env.local
+  npm run dev
+  ```
+  Expected: `▲ Next.js 14.x — Local: http://localhost:3000`
+
+  > **Note:** If you see `npm audit` warnings after install — do NOT run `npm audit fix --force`.
+  > That attempts a major Next.js version bump. Run `npm install next@14.2.29` instead to apply
+  > only the safe patch-level fix.
+
+*Verify the backend — Terminal 3:*
+- 🔲 Health check:
+  ```bash
+  curl -s http://localhost:8080/healthz
+  # → {"status":"ok","version":"0.1.0"}
+  ```
+- 🔲 Submit a run and stream events:
+  ```bash
+  curl -s -X POST http://localhost:8080/runs \
+    -H "Content-Type: application/json" \
+    -d '{"prompt": "Create an AWS VPC with two public subnets", "provider": "aws"}'
+  # → SSE stream: init → status → 5 node events → 4 file events → done
+  ```
+- 🔲 Capture run_id and poll the result:
+  ```bash
+  RUN_ID=$(curl -s -X POST http://localhost:8080/runs \
+    -H "Content-Type: application/json" \
+    -d '{"prompt": "Create an AWS VPC", "provider": "aws"}' \
+    | awk '/^data:/{print; exit}' \
+    | python3 -c "import sys,json; print(json.loads(sys.stdin.read().split('data: ',1)[1])['run_id'])")
+  echo "Run ID: $RUN_ID"
+  curl -s http://localhost:8080/runs/$RUN_ID | python3 -m json.tool
+  # → {"status":"completed","result":{"file_count":4,"terraform_valid":true},...}
+  ```
+- 🔲 Verify the browser UI at `http://localhost:3000`:
+  - Type a prompt → click "Generate Terraform" → pipeline dots turn green one by one → 4 `.tf` code blocks appear
+
+*Static analysis — Terminal 3 (from `aiops-platform/` root):*
+- 🔲 Python lint (saas/api):
+  ```bash
+  cd ~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform
+  source saas/api/.venv/bin/activate
+  pip install ruff --break-system-packages
+  python -m ruff check saas/api/
+  # → All checks passed.
+  deactivate
+  ```
+- 🔲 ESLint + TypeScript (saas/web):
+  ```bash
+  cd saas/web
+  # One-time: pin ESLint to Next.js 14 compatible versions
+  # (.eslintrc.json already exists — prevents interactive installer)
+  npm install --save-dev eslint@^8 eslint-config-next@14.2.29
+  npm run lint        # → ✓ No ESLint warnings or errors
+  npm run type-check  # → Found 0 errors.
+  ```
+
+  > **Why pin `eslint-config-next@14.2.29`?** Without the pin, `npm run lint` auto-installs
+  > `eslint-config-next@latest` (currently v16), which requires ESLint ≥9 and breaks on
+  > a Next.js 14 project. The `.eslintrc.json` prevents the interactive prompt;
+  > the pinned install prevents the version conflict.
 
 **Evening — The multi-provider comparison (the senior signal):**
 
@@ -847,8 +937,14 @@ EXP=~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/experi
 
 ✅ **Progress check:**
 
-- [ ] Three flagship gifs visible in their READMEs
-- [ ] `saas/web/` and `saas/api/` exist with clean architecture doc
+- [ ] Three flagship gifs recorded and visible in their READMEs (`demos/*.gif`)
+- [ ] `curl http://localhost:8080/healthz` returns `{"status":"ok","version":"0.1.0"}`
+- [ ] `POST /runs` SSE stream completes with `event: done` and `file_count: 4`
+- [ ] `GET /runs/$RUN_ID` (run_id extracted from `init` event body) returns `{"status":"completed","result":{"terraform_valid":true}}`
+- [ ] Browser at `localhost:3000` shows live pipeline progress and 4 generated `.tf` files
+- [ ] `python -m ruff check saas/api/` exits 0 — all Python lint checks passed
+- [ ] `npm run lint` exits 0 — no ESLint warnings or errors (`eslint@^8` + `eslint-config-next@14.2.29` installed)
+- [ ] `npm run type-check` exits 0 — no TypeScript errors
 - [ ] `experiments/multi-provider-comparison.md` published with real numbers across 5 models and a clear recommendation
 - [ ] Phase 1 officially DONE
 
@@ -886,7 +982,8 @@ EXP=~/workspace/claude-code/ai-journey/agentic-ai-projects/aiops-platform/experi
 | Day 6 LangGraph confusion | Build the minimal LangGraph tutorial agent first; apply the pattern to K8s Doctor after. |
 | Day 7 OpenSRE PR blocks you | Skip it entirely — it's optional. Move on. |
 | Day 8 SAST or IaC blocks | Time-box each to 4 hours; the one unfinished moves to Day 9 morning. |
-| Day 9 multi-agent overwhelms | Run a single-agent baseline for the same incident first; the contrast teaches more. |
+| Day 9 MiniLM produces 0 clusters | Threshold is model-specific. MiniLM needs `SIMILARITY_THRESHOLD=0.60`, not 0.85 (calibrated for Voyage AI). Run `diagnose_similarity.py --scenario oom_cascade` to see pairwise scores. |
+| Day 9 approval gate never fires | The Mitigator may be describing the fix in text without calling the tool. Add `🔧` sentinel prints to mutating tools + tighten the Mitigator task description to explicitly require tool invocation. |
 | Falling 1+ day behind | Drop the Pentest Agent (Day 10 afternoon) before dropping anything else. |
 
 ---

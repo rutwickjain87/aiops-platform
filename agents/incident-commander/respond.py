@@ -37,9 +37,10 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 DEMO_INCIDENTS = {
+    # Uses the OOMKilled fixture deployed by `make cluster-up` into namespace=doctor-lab
     "oom": {
         "incident_id": f"INC-{datetime.now(timezone.utc).strftime('%Y%m%d')}-DEMO1",
-        "title": "OOMKilled cascade in payments namespace",
+        "title": "OOMKilled cascade in doctor-lab namespace",
         "severity": "critical",
         "alert_count": 3,
         "root_cause": None,
@@ -49,41 +50,43 @@ DEMO_INCIDENTS = {
             "labels": {
                 "alertname": "KubernetesContainerOOMKilled",
                 "severity": "critical",
-                "namespace": "payments",
-                "pod": "payments-api-7d4f6b9c8-xk2pn",
-                "container": "api",
+                "namespace": "doctor-lab",
+                "pod": "oom-demo",
+                "container": "oom-container",
             },
             "annotations": {
-                "summary": "Container api in pod payments-api-7d4f6b9c8-xk2pn OOMKilled",
+                "summary": "Container oom-container in pod oom-demo OOMKilled",
                 "description": (
-                    "Container has been OOMKilled 8 times in the last 10 minutes. "
-                    "Memory limit: 512Mi. Current working set: 510Mi. "
-                    "Related: HighErrorRate and HighLatencyP99 also firing."
+                    "Container has been OOMKilled repeatedly. Memory limit exceeded. "
+                    "Pod oom-demo in namespace doctor-lab is in CrashLoopBackOff. "
+                    "Related: crashloop-demo also restarting in the same namespace."
                 ),
             },
         },
     },
+    # Uses the CrashLoopBackOff fixture deployed by `make cluster-up` into namespace=doctor-lab
     "node_pressure": {
         "incident_id": f"INC-{datetime.now(timezone.utc).strftime('%Y%m%d')}-DEMO2",
-        "title": "Node disk + memory pressure causing pod evictions",
+        "title": "CrashLoopBackOff cascade in doctor-lab namespace",
         "severity": "critical",
-        "alert_count": 4,
+        "alert_count": 2,
         "root_cause": None,
         "summary": None,
-        "alert_ids": [10, 11, 12, 13],
+        "alert_ids": [10, 11],
         "representative_alert": {
             "labels": {
-                "alertname": "NodeDiskPressure",
+                "alertname": "KubernetesPodCrashLooping",
                 "severity": "critical",
-                "namespace": "monitoring",
-                "node": "ip-10-0-1-42.eu-west-1.compute.internal",
+                "namespace": "doctor-lab",
+                "pod": "crashloop-demo",
+                "container": "crashloop-container",
             },
             "annotations": {
-                "summary": "Node ip-10-0-1-42 disk pressure — 94% used",
+                "summary": "Pod crashloop-demo is in CrashLoopBackOff",
                 "description": (
-                    "Node disk usage is at 94%. Kubelet has started evicting pods. "
-                    "Prometheus pod (prometheus-7f9d4b8c5-2xvnq) evicted. "
-                    "Metrics collection is interrupted."
+                    "Pod crashloop-demo in namespace doctor-lab has restarted more than "
+                    "5 times in the last 10 minutes. Container exits immediately on start. "
+                    "Check container logs and init configuration."
                 ),
             },
         },

@@ -10,8 +10,7 @@ Agent roster:
 Triage + Investigator run in parallel (CrewAI sequential_tasks=False on their task group).
 Mitigator waits for both. Communicator waits for Mitigator.
 """
-from crewai import Agent
-from langchain_anthropic import ChatAnthropic
+from crewai import Agent, LLM
 
 from ..tools.kubectl_tool import (
     get_pod_logs, describe_pod, get_pods_in_namespace,
@@ -25,11 +24,11 @@ from ..tools.prometheus_tool import (
 from ..tools.slack_tool import post_incident_card, post_resolution_update
 
 # ---------------------------------------------------------------------------
-# LLM instances — model routing:
-# Sonnet for reasoning-heavy agents, Haiku for the Communicator
+# LLM instances — model routing using CrewAI's native LLM class.
+# CrewAI >= 0.80 no longer accepts LangChain ChatAnthropic objects directly.
 # ---------------------------------------------------------------------------
-_sonnet = ChatAnthropic(model="claude-sonnet-4-6", temperature=0, max_tokens=2048)
-_haiku = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0, max_tokens=1024)
+_sonnet = LLM(model="anthropic/claude-sonnet-4-6", temperature=0, max_tokens=2048)
+_haiku  = LLM(model="anthropic/claude-haiku-4-5-20251001", temperature=0, max_tokens=1024)
 
 
 # ---------------------------------------------------------------------------
