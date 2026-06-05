@@ -1473,15 +1473,17 @@ What it doesn't have (Phase 2 scope): paying users, deployed infra, real auth/bi
 
 ### Pending (to run locally)
 
-- [ ] `brew install vhs ffmpeg` → `vhs demos/log-triage.tape` → confirm gif renders
-- [ ] `vhs demos/k8s-doctor.tape` → embed in k8s-doctor README
-- [ ] `vhs demos/incident-commander.tape` → embed in incident-commander README
+- [x] `vhs demos/log-triage.tape` → gif recorded (856K)
+- [x] `vhs demos/k8s-doctor.tape` → gif recorded (3.3M), embedded in README
+- [x] `vhs demos/incident-commander.tape` → gif recorded (2.7M), embedded in README
 - [ ] `cd saas/api && uvicorn main:app --reload` → `curl http://localhost:8080/healthz`
 - [ ] `cd saas/web && npm install && npm run dev` → open http://localhost:3000
-- [ ] `python run_multi_provider_comparison.py --quick` → confirm 5 model blocks appear
-- [ ] `python run_multi_provider_comparison.py` (full run) → fill in qualitative observations
-- [ ] Git commit: `feat: Day 11 — demos, micro-SaaS scaffold, multi-provider comparison`
-- [ ] Flip repo public, tag `v0.1.0`, draft GitHub Release
-- [ ] Pin repo on GitHub profile
-- [ ] Draft LinkedIn post (publish Day 12 morning after sleeping on it)
+- [x] `python run_multi_provider_comparison.py` (full run) → all 5 models completed
+- [x] Fill in qualitative observations + recommendation → `experiments/multi-provider-comparison.md`
+- [x] Git commit: `ce4d278 feat: Day 11 — demos, micro-SaaS scaffold, multi-provider comparison`
+- [x] Tag `v0.1.0` → pushed
+- [ ] Flip repo public → GitHub Settings → Danger Zone
+- [ ] Draft GitHub Release for v0.1.0 → see `docs/github-release-v0.1.0.md`
+- [ ] Pin repo on GitHub profile → Profile → Customize pins
+- [ ] Publish LinkedIn post → see `docs/linkedin-post-day11.md` (publish Day 12 morning)
 

@@ -108,3 +108,6 @@ docs/*.mp4
 # --- Local-only data ---
 samples/
 fixtures/local/
+
+# --- Claude / Cowork session state ---
+.claude/
